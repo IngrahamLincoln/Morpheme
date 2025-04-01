@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { JSX } from 'react';
+import { getDiagonalSegments, parseSegmentId, isInnerCircle } from './behaviors';
 
 interface Point {
   x: number;
@@ -29,6 +30,7 @@ const SegmentedDisplay10x10: React.FC = () => {
   
   // Active segments state
   const [activeSegments, setActiveSegments] = useState<Set<string>>(new Set());
+  const [lastSelectedDot, setLastSelectedDot] = useState<string | null>(null);
   
   // Spacing calculated from factor and radius
   const spacing = outerRadius * spacingFactor;
@@ -51,11 +53,44 @@ const SegmentedDisplay10x10: React.FC = () => {
     toggleSegment: (id: string) => {
       setActiveSegments(prev => {
         const newSet = new Set(prev);
-        if (newSet.has(id)) {
-          newSet.delete(id);
+        
+        // If this is an inner circle (dot)
+        if (isInnerCircle(id)) {
+          // If we already have a last selected dot
+          if (lastSelectedDot) {
+            const startPoint = parseSegmentId(lastSelectedDot);
+            const endPoint = parseSegmentId(id);
+            
+            // Get diagonal segments if they exist
+            const diagonalSegments = getDiagonalSegments(startPoint, endPoint);
+            
+            // If we found diagonal segments, add them all
+            if (diagonalSegments.length > 0) {
+              diagonalSegments.forEach(segment => newSet.add(segment));
+              newSet.add(id); // Add the current dot
+              setLastSelectedDot(null); // Reset last selected dot
+              return newSet;
+            }
+          }
+          
+          // Toggle the current dot and update last selected
+          if (newSet.has(id)) {
+            newSet.delete(id);
+            setLastSelectedDot(null);
+          } else {
+            newSet.add(id);
+            setLastSelectedDot(id);
+          }
         } else {
-          newSet.add(id);
+          // For non-dot segments, just toggle normally
+          if (newSet.has(id)) {
+            newSet.delete(id);
+          } else {
+            newSet.add(id);
+          }
+          setLastSelectedDot(null);
         }
+        
         return newSet;
       });
     },
