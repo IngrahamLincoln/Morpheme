@@ -3,6 +3,23 @@ interface Point {
   col: number;
 }
 
+export const getHorizontalSegments = (start: Point, end: Point): string[] => {
+  // Only process if the points are horizontally adjacent
+  const rowDiff = Math.abs(start.row - end.row);
+  const colDiff = Math.abs(start.col - end.col);
+  
+  if (rowDiff !== 0 || colDiff !== 1) {
+    return [];
+  }
+  
+  // Get the leftmost column
+  const leftCol = Math.min(start.col, end.col);
+  const row = start.row; // Since they're in the same row
+  
+  // Return the horizontal connector segment
+  return [`i-${row}-${leftCol}`];
+};
+
 export const getDiagonalSegments = (start: Point, end: Point): string[] => {
   // Only process if the points form a diagonal
   const rowDiff = Math.abs(start.row - end.row);

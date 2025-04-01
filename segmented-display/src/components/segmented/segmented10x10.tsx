@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { JSX } from 'react';
-import { getDiagonalSegments, parseSegmentId, isInnerCircle } from './behaviors';
+import { getDiagonalSegments, getHorizontalSegments, parseSegmentId, isInnerCircle } from './behaviors';
 
 interface Point {
   x: number;
@@ -31,6 +31,7 @@ const SegmentedDisplay10x10: React.FC = () => {
   // Active segments state
   const [activeSegments, setActiveSegments] = useState<Set<string>>(new Set());
   const [lastSelectedDot, setLastSelectedDot] = useState<string | null>(null);
+  const [doubleActivatedB, setDoubleActivatedB] = useState<Set<string>>(new Set());
   
   // Spacing calculated from factor and radius
   const spacing = outerRadius * spacingFactor;
@@ -54,6 +55,27 @@ const SegmentedDisplay10x10: React.FC = () => {
       setActiveSegments(prev => {
         const newSet = new Set(prev);
         
+        // Handle c segment special case (horizontal lens)
+        if (id.startsWith('c-')) {
+          const [_, row, col] = id.split('-');
+          const iSegment = `i-${row}-${col}`;
+
+          if (!newSet.has(id) && !newSet.has(iSegment)) {
+            // First click - activate c
+            newSet.add(id);
+          } else if (newSet.has(id) && !newSet.has(iSegment)) {
+            // Second click - deactivate c and activate i
+            newSet.delete(id);
+            newSet.add(iSegment);
+          } else {
+            // Third click (or clicking c when i is active) - deactivate i
+            newSet.delete(iSegment);
+          }
+          
+          setLastSelectedDot(null);
+          return newSet;
+        }
+        
         // If this is an inner circle (dot)
         if (isInnerCircle(id)) {
           // If we already have a last selected dot
@@ -61,10 +83,17 @@ const SegmentedDisplay10x10: React.FC = () => {
             const startPoint = parseSegmentId(lastSelectedDot);
             const endPoint = parseSegmentId(id);
             
-            // Get diagonal segments if they exist
-            const diagonalSegments = getDiagonalSegments(startPoint, endPoint);
+            // Try horizontal connection first
+            const horizontalSegments = getHorizontalSegments(startPoint, endPoint);
+            if (horizontalSegments.length > 0) {
+              horizontalSegments.forEach(segment => newSet.add(segment));
+              newSet.add(id); // Add the current dot
+              setLastSelectedDot(null); // Reset last selected dot
+              return newSet;
+            }
             
-            // If we found diagonal segments, add them all
+            // If not horizontal, try diagonal
+            const diagonalSegments = getDiagonalSegments(startPoint, endPoint);
             if (diagonalSegments.length > 0) {
               diagonalSegments.forEach(segment => newSet.add(segment));
               newSet.add(id); // Add the current dot
@@ -242,6 +271,22 @@ const SegmentedDisplay10x10: React.FC = () => {
   const svgWidth = margin * 2 + spacing * 9 + outerRadius * 2;
   const svgHeight = margin * 2 + spacing * 9 + outerRadius * 2;
   
+  // Function to generate the SVG path for horizontal connector
+  const getHorizontalConnectorPath = (center: Point): string => {
+    const x1 = center.x;
+    const x2 = center.x + spacing;
+    const y = center.y;
+    const height = innerRadius * 2; // Make the connector the same height as the inner circle diameter
+    
+    return `
+      M ${x1} ${y - height/2}
+      L ${x2} ${y - height/2}
+      L ${x2} ${y + height/2}
+      L ${x1} ${y + height/2}
+      Z
+    `;
+  };
+  
   // Generate SVG elements
   const gridElements = useMemo(() => {
     const elements: JSX.Element[] = [];
@@ -328,7 +373,7 @@ const SegmentedDisplay10x10: React.FC = () => {
     
     // Draw horizontal lenses
     centers.forEach((center) => {
-      if (center.col! < 9) {
+      if (typeof center.col === 'number' && center.col < 9) {
         const rightCenter = centers.find(c => c.row === center.row && c.col === center.col! + 1);
         const id = `c-${center.row}-${center.col}`;
         const path = segmentHelpers.calculateLensPath(center.x, center.y, rightCenter!.x, rightCenter!.y, outerRadius);
@@ -384,6 +429,27 @@ const SegmentedDisplay10x10: React.FC = () => {
           className="cursor-pointer hover:opacity-80"
         />
       );
+    });
+    
+    // Draw horizontal connectors - only draw them if they're active
+    centers.forEach((center) => {
+      if (typeof center.col === 'number' && center.col < 9) {
+        const id = `i-${center.row}-${center.col}`;
+        if (activeSegments.has(id)) {
+          const parentId = `c-${center.row}-${center.col}`; // Get the parent c segment ID
+          elements.push(
+            <path
+              key={id}
+              d={getHorizontalConnectorPath(center)}
+              fill={segmentHelpers.getFill(id)}
+              stroke={showOutlines ? "black" : "none"}
+              strokeWidth="1"
+              className="cursor-pointer hover:opacity-80"
+              onClick={() => segmentHelpers.toggleSegment(parentId)} // Click on i triggers parent c
+            />
+          );
+        }
+      }
     });
     
     // Add labels if enabled
@@ -455,7 +521,7 @@ const SegmentedDisplay10x10: React.FC = () => {
         });
         
         // Horizontal lens labels
-        if (center.col! < 9) {
+        if (typeof center.col === 'number' && center.col < 9) {
           const rightCenter = centers.find(c => c.row === center.row && c.col === center.col! + 1);
           elements.push(
             <text
