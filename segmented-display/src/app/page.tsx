@@ -1,12 +1,12 @@
 'use client';
 
 import React from 'react';
-import SegmentedDisplay from '../components/segmented/segmented01';
+import SegmentedDisplay10x10 from '../components/segmented/segmented10x10';
 
 export default function Home() {
   return (
     <main className="min-h-screen p-8">
-      <SegmentedDisplay />
+      <SegmentedDisplay10x10 />
     </main>
   );
 } 
