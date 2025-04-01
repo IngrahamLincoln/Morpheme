@@ -1,0 +1,20 @@
+body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #f0f0f0;
+    font-family: sans-serif;
+}
+
+.canvas-container {
+    border: 1px solid #ccc;
+    background-color: #ffffff; /* White background for the canvas effect */
+    margin-top: 20px;
+}
+
+#metaballCanvas {
+    display: block; /* Removes extra space below canvas */
+    cursor: pointer;
+} 

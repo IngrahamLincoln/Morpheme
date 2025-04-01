@@ -130,18 +130,16 @@ function draw() {
 // Function to find and draw all necessary connections
 function drawAllConnections() {
   const drawnPairs = new Set(); // Keep track of pairs we've already drawn
+  const triangles = findTriangles(); // Find all triangles of active balls
 
   for (let i = 0; i < numCols; i++) {
     for (let j = 0; j < numRows; j++) {
       const currentBallIndex = i * numRows + j;
       const currentBall = grid[currentBallIndex];
 
-      if (!currentBall.isActive) continue; // Only check from active balls
+      if (!currentBall.isActive) continue;
 
-      // Define potential neighbors (relative grid coords) - only need to check forward/down
       const neighborsRelative = [
-        // { di: 1, dj: 0 },  // Right - Add if you want axial connections later
-        // { di: 0, dj: 1 },  // Down - Add if you want axial connections later
         { di: 1, dj: 1 },  // Down-Right (Diagonal)
         { di: 1, dj: -1 } // Up-Right (Diagonal)
       ];
@@ -150,23 +148,23 @@ function drawAllConnections() {
         const ni = i + neighbor.di;
         const nj = j + neighbor.dj;
 
-        // Check bounds
         if (ni >= 0 && ni < numCols && nj >= 0 && nj < numRows) {
           const neighborBallIndex = ni * numRows + nj;
           const neighborBall = grid[neighborBallIndex];
 
           if (neighborBall.isActive) {
-            // --- Pair Tracking ---
             const key = currentBallIndex < neighborBallIndex
               ? `${currentBallIndex}-${neighborBallIndex}`
               : `${neighborBallIndex}-${currentBallIndex}`;
 
             if (!drawnPairs.has(key)) {
-                // Check if DIAGONAL for the special connection shape
-                if (abs(neighbor.di) === 1 && abs(neighbor.dj) === 1) {
-                    drawDiagonalConnection(currentBall, neighborBall);
-                }
-                 drawnPairs.add(key);
+              // Find if this connection is part of a triangle
+              const triangleInfo = triangles.find(t => 
+                t.connections.some(c => c === key)
+              );
+
+              drawDiagonalConnection(currentBall, neighborBall, triangleInfo);
+              drawnPairs.add(key);
             }
           }
         }
@@ -175,9 +173,59 @@ function drawAllConnections() {
   }
 }
 
+// Helper function to find triangles of active balls
+function findTriangles() {
+  const triangles = [];
+  
+  for (let i = 0; i < numCols - 1; i++) {
+    for (let j = 0; j < numRows - 1; j++) {
+      // Check potential triangle patterns
+      const patterns = [
+        // Down-right triangle
+        [
+          [i, j],
+          [i + 1, j],
+          [i + 1, j + 1]
+        ],
+        // Up-right triangle
+        [
+          [i, j + 1],
+          [i + 1, j],
+          [i + 1, j + 1]
+        ]
+      ];
+
+      for (const pattern of patterns) {
+        const balls = pattern.map(([x, y]) => {
+          const idx = x * numRows + y;
+          return idx < grid.length ? grid[idx] : null;
+        });
+
+        if (balls.every(b => b && b.isActive)) {
+          const connections = [
+            `${balls[0].gridI * numRows + balls[0].gridJ}-${balls[1].gridI * numRows + balls[1].gridJ}`,
+            `${balls[1].gridI * numRows + balls[1].gridJ}-${balls[2].gridI * numRows + balls[2].gridJ}`,
+            `${balls[0].gridI * numRows + balls[0].gridJ}-${balls[2].gridI * numRows + balls[2].gridJ}`
+          ].map(key => key.split('-').sort().join('-'));
+
+          triangles.push({
+            balls,
+            connections,
+            center: {
+              x: (balls[0].x + balls[1].x + balls[2].x) / 3,
+              y: (balls[0].y + balls[1].y + balls[2].y) / 3
+            }
+          });
+        }
+      }
+    }
+  }
+  
+  return triangles;
+}
 
 // --- MATHEMATICALLY PRECISE connector calculation ---
-function drawDiagonalConnection(ball1, ball2) {
+function drawDiagonalConnection(ball1, ball2, triangleInfo) {
   const d = dist(ball1.x, ball1.y, ball2.x, ball2.y);
   const dx = (ball2.x - ball1.x) / d;
   const dy = (ball2.y - ball1.y) / d;
@@ -185,8 +233,8 @@ function drawDiagonalConnection(ball1, ball2) {
   const perpX = -dy;
   const perpY = dx;
   
-  // Wider arc for fuller connection
-  const arcWidth = PI/3;
+  // Adjust arc width based on whether this is part of a triangle
+  const arcWidth = triangleInfo ? PI/4 : PI/3;
   const centerAngle1 = atan2(dy, dx);
   const centerAngle2 = atan2(-dy, -dx);
   
@@ -196,7 +244,6 @@ function drawDiagonalConnection(ball1, ball2) {
   const startAngle2 = centerAngle2 - arcWidth;
   const endAngle2 = centerAngle2 + arcWidth;
   
-  // Start from inner circle edges
   const p1Start = {
     x: ball1.x + ballRadius * cos(startAngle1),
     y: ball1.y + ballRadius * sin(startAngle1)
@@ -217,26 +264,49 @@ function drawDiagonalConnection(ball1, ball2) {
     y: ball2.y + ballRadius * sin(endAngle2)
   };
   
-  // Control points calculation
-  const midX = (ball1.x + ball2.x) / 2;
-  const midY = (ball1.y + ball2.y) / 2;
-  const perpDist = totalRadius * 0.8;
+  // Adjust control points based on triangle presence
+  const perpDist = triangleInfo ? totalRadius * 0.5 : totalRadius * 0.8;
   
-  // Calculate control points relative to midpoint
-  const ctrlRight = {
-    x: midX + perpX * perpDist,
-    y: midY + perpY * perpDist
-  };
+  let ctrlRight, ctrlLeft;
   
-  const ctrlLeft = {
-    x: midX - perpX * perpDist,
-    y: midY - perpY * perpDist
-  };
+  if (triangleInfo) {
+    // Use triangle center to influence control points
+    const toCenter = {
+      x: triangleInfo.center.x - (ball1.x + ball2.x) / 2,
+      y: triangleInfo.center.y - (ball1.y + ball2.y) / 2
+    };
+    const centerDist = sqrt(toCenter.x * toCenter.x + toCenter.y * toCenter.y);
+    const normCenter = {
+      x: toCenter.x / centerDist,
+      y: toCenter.y / centerDist
+    };
+    
+    ctrlRight = {
+      x: (ball1.x + ball2.x) / 2 + perpDist * (perpX + normCenter.x * 0.5),
+      y: (ball1.y + ball2.y) / 2 + perpDist * (perpY + normCenter.y * 0.5)
+    };
+    
+    ctrlLeft = {
+      x: (ball1.x + ball2.x) / 2 + perpDist * (-perpX + normCenter.x * 0.5),
+      y: (ball1.y + ball2.y) / 2 + perpDist * (-perpY + normCenter.y * 0.5)
+    };
+  } else {
+    // Standard control points for non-triangle connections
+    ctrlRight = {
+      x: (ball1.x + ball2.x) / 2 + perpX * perpDist,
+      y: (ball1.y + ball2.y) / 2 + perpY * perpDist
+    };
+    
+    ctrlLeft = {
+      x: (ball1.x + ball2.x) / 2 - perpX * perpDist,
+      y: (ball1.y + ball2.y) / 2 - perpY * perpDist
+    };
+  }
   
   push();
   fill(activeColor);
   noStroke();
-
+  
   beginShape();
   
   // Draw first circle arc
@@ -265,7 +335,7 @@ function drawDiagonalConnection(ball1, ball2) {
     ctrlLeft.x, ctrlLeft.y,
     p1Start.x, p1Start.y
   );
-
+  
   endShape(CLOSE);
   pop();
 }

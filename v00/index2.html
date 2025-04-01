@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Granular Circle Grid</title>
+  <style>
+    :root {
+      --bg-color: #f0f0f0;
+      --text-color: #333;
+      --container-bg: white;
+      --border-color: #ddd;
+      --shadow-color: rgba(0,0,0,0.1);
+      --control-label-color: #333;
+      --info-text-color: #333;
+      --svg-outer-fill: rgba(200, 200, 200, 0.1);
+      --svg-inner-fill: white;
+      --svg-stroke-color: #aaa;
+      --svg-lens-fill: rgba(150, 150, 180, 0.4);
+      --svg-lens-stroke: #666;
+      --svg-label-fill: rgba(100, 100, 100, 0.7);
+      --svg-inner-label-fill: rgba(255, 0, 0, 0.7);
+      --highlight-outer-fill: rgba(100, 150, 255, 0.5);
+      --highlight-inner-fill: rgba(255, 200, 200, 0.8);
+      --highlight-lens-fill: rgba(50, 100, 200, 0.8);
+      --button-bg: #eee;
+      --button-border: #ccc;
+      --button-text: #333;
+    }
+
+    body.night-mode {
+      --bg-color: #222;
+      --text-color: #eee;
+      --container-bg: #333;
+      --border-color: #555;
+      --shadow-color: rgba(0,0,0,0.4);
+      --control-label-color: #eee;
+      --info-text-color: #eee;
+      --svg-outer-fill: rgba(80, 80, 80, 0.3);
+      --svg-inner-fill: #444;
+      --svg-stroke-color: #777;
+      --svg-lens-fill: rgba(100, 100, 120, 0.6);
+      --svg-lens-stroke: #999;
+      --svg-label-fill: rgba(150, 150, 150, 0.7);
+      --svg-inner-label-fill: rgba(255, 100, 100, 0.8);
+      --highlight-outer-fill: rgba(120, 180, 255, 0.6);
+      --highlight-inner-fill: rgba(255, 150, 150, 0.7);
+      --highlight-lens-fill: rgba(80, 130, 220, 0.8);
+      --button-bg: #555;
+      --button-border: #777;
+      --button-text: #eee;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      transition: background-color 0.3s ease, color 0.3s ease;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+    .svg-container {
+      border: 1px solid var(--border-color);
+      box-shadow: 0 2px 8px var(--shadow-color);
+      margin: 20px 0;
+      background-color: var(--container-bg);
+      transition: background-color 0.3s ease, border-color 0.3s ease;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      margin-bottom: 20px;
+      max-width: 600px;
+      justify-content: center;
+      align-items: flex-end;
+    }
+    .controls label {
+      display: flex;
+      flex-direction: column;
+      font-size: 14px;
+      color: var(--control-label-color);
+    }
+    .controls input {
+      margin-top: 5px;
+    }
+    .theme-toggle-button {
+      padding: 8px 15px;
+      font-size: 14px;
+      cursor: pointer;
+      border: 1px solid var(--button-border);
+      background-color: var(--button-bg);
+      color: var(--button-text);
+      border-radius: 4px;
+      transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+    }
+    .info {
+      text-align: center;
+      margin-top: 10px;
+      font-size: 14px;
+      color: var(--info-text-color);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Granular Circle Grid</h1>
+    
+    <div class="controls">
+      <label>Rows:
+        <input type="number" id="rows" min="2" max="20" value="4">
+      </label>
+      <label>Columns:
+        <input type="number" id="cols" min="2" max="20" value="5">
+      </label>
+      <label>Radius:
+        <input type="number" id="radius" min="10" max="100" value="40">
+      </label>
+      <label>Inner Radius %:
+        <input type="range" id="innerRadiusPercent" min="20" max="80" step="5" value="60">
+        <span id="innerRadiusValue">60%</span>
+      </label>
+      <label>X Spacing:
+        <input type="range" id="spacingX" min="1.0" max="2.0" step="0.05" value="1.5">
+        <span id="spacingXValue">1.50</span>
+      </label>
+      <label>Y Spacing:
+        <input type="range" id="spacingY" min="1.0" max="2.0" step="0.05" value="1.4">
+        <span id="spacingYValue">1.40</span>
+      </label>
+      <button id="themeToggle" class="theme-toggle-button">Toggle Theme</button>
+    </div>
+    
+    <div class="svg-container" id="svg-container"></div>
+    
+    <div class="info">
+      <div id="activeSegment">Active Segment: None</div>
+    </div>
+  </div>
+
+  <script>
+    // Configuration and state
+    let config = {
+      rows: 4,
+      cols: 5,
+      radius: 40,
+      innerRadiusPercent: 60,
+      spacingXFactor: 1.5,
+      spacingYFactor: 1.4
+    };
+    
+    let activeSegmentId = null;
+    let segments = [];
+    
+    // SVG namespace
+    const svgNS = "http://www.w3.org/2000/svg";
+    
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      // Get inputs
+      const rowsInput = document.getElementById('rows');
+      const colsInput = document.getElementById('cols');
+      const radiusInput = document.getElementById('radius');
+      const innerRadiusInput = document.getElementById('innerRadiusPercent');
+      const spacingXInput = document.getElementById('spacingX');
+      const spacingYInput = document.getElementById('spacingY');
+      const themeToggleButton = document.getElementById('themeToggle');
+      
+      // Update displays
+      document.getElementById('innerRadiusValue').textContent = `${innerRadiusInput.value}%`;
+      document.getElementById('spacingXValue').textContent = parseFloat(spacingXInput.value).toFixed(2);
+      document.getElementById('spacingYValue').textContent = parseFloat(spacingYInput.value).toFixed(2);
+      
+      // Set initial values
+      config.rows = parseInt(rowsInput.value);
+      config.cols = parseInt(colsInput.value);
+      config.radius = parseInt(radiusInput.value);
+      config.innerRadiusPercent = parseInt(innerRadiusInput.value);
+      config.spacingXFactor = parseFloat(spacingXInput.value);
+      config.spacingYFactor = parseFloat(spacingYInput.value);
+      
+      // Add event listeners
+      rowsInput.addEventListener('change', updateGrid);
+      colsInput.addEventListener('change', updateGrid);
+      radiusInput.addEventListener('change', updateGrid);
+      innerRadiusInput.addEventListener('input', e => {
+        config.innerRadiusPercent = parseInt(e.target.value);
+        document.getElementById('innerRadiusValue').textContent = `${config.innerRadiusPercent}%`;
+        updateGrid();
+      });
+      spacingXInput.addEventListener('input', e => {
+        config.spacingXFactor = parseFloat(e.target.value);
+        document.getElementById('spacingXValue').textContent = config.spacingXFactor.toFixed(2);
+        updateGrid();
+      });
+      spacingYInput.addEventListener('input', e => {
+        config.spacingYFactor = parseFloat(e.target.value);
+        document.getElementById('spacingYValue').textContent = config.spacingYFactor.toFixed(2);
+        updateGrid();
+      });
+      themeToggleButton.addEventListener('click', toggleTheme);
+
+      // Check for saved theme preference
+      if (localStorage.getItem('theme') === 'night') {
+          document.body.classList.add('night-mode');
+          themeToggleButton.textContent = 'Day Mode';
+      } else {
+          themeToggleButton.textContent = 'Night Mode';
+      }
+      
+      // Initial render
+      renderGrid();
+    });
+    
+    // Update grid with new configuration
+    function updateGrid() {
+      config.rows = parseInt(document.getElementById('rows').value);
+      config.cols = parseInt(document.getElementById('cols').value);
+      config.radius = parseInt(document.getElementById('radius').value);
+      
+      renderGrid();
+    }
+    
+    // Main render function
+    function renderGrid() {
+      const container = document.getElementById('svg-container');
+      container.innerHTML = '';
+      
+      // Calculate dimensions
+      const radius = config.radius;
+      const innerRadius = radius * (config.innerRadiusPercent / 100);
+      const spacingX = radius * config.spacingXFactor;
+      const spacingY = radius * config.spacingYFactor;
+      
+      // Calculate total width and height
+      const totalWidth = (config.cols - 1) * spacingX + 2 * radius;
+      const totalHeight = (config.rows - 1) * spacingY + 2 * radius;
+      
+      // Create SVG element
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("viewBox", `0 0 ${totalWidth} ${totalHeight}`);
+      svg.setAttribute("width", "100%");
+      svg.style.aspectRatio = totalWidth / totalHeight;
+      svg.addEventListener('click', () => setActiveSegment(null));
+      
+      // Generate all segments
+      segments = generateSegments(config.rows, config.cols, radius, innerRadius, spacingX, spacingY);
+      
+      // Create outer circles layer
+      const outerCirclesGroup = document.createElementNS(svgNS, "g");
+      outerCirclesGroup.classList.add("outer-circles-layer");
+      
+      segments.circles.forEach(circle => {
+        const circleElement = createCircleElement(circle, false);
+        outerCirclesGroup.appendChild(circleElement);
+      });
+      
+      // Create lens layer (intersections)
+      const lensesGroup = document.createElementNS(svgNS, "g");
+      lensesGroup.classList.add("lenses-layer");
+      
+      segments.lenses.forEach(lens => {
+        const lensElement = createLensElement(lens);
+        lensesGroup.appendChild(lensElement);
+      });
+      
+      // Create inner circles layer (on top)
+      const innerCirclesGroup = document.createElementNS(svgNS, "g");
+      innerCirclesGroup.classList.add("inner-circles-layer");
+      
+      segments.circles.forEach(circle => {
+        const innerCircleElement = createInnerCircleElement(circle, innerRadius);
+        innerCirclesGroup.appendChild(innerCircleElement);
+      });
+      
+      // Add layers to SVG in correct order
+      svg.appendChild(outerCirclesGroup);
+      svg.appendChild(lensesGroup);
+      svg.appendChild(innerCirclesGroup);
+      
+      // Add SVG to container
+      container.appendChild(svg);
+    }
+    
+    // Generate all segment data
+    function generateSegments(rows, cols, radius, innerRadius, spacingX, spacingY) {
+      const circles = [];
+      const lenses = [];
+      const checkedPairs = new Set();
+      
+      // 1. Generate circles
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const cx = c * spacingX + radius;
+          const cy = r * spacingY + radius;
+          const id = `circ-${r}-${c}`;
+          
+          circles.push({ 
+            id, 
+            cx, 
+            cy, 
+            r: radius, 
+            innerR: innerRadius,
+            gridPos: { row: r, col: c } 
+          });
+        }
+      }
+      
+      // 2. Find and generate lens intersections
+      for (let i = 0; i < circles.length; i++) {
+        for (let j = i + 1; j < circles.length; j++) {
+          const c1 = circles[i];
+          const c2 = circles[j];
+          
+          // Check if circles are close enough to intersect
+          const dx = c1.cx - c2.cx;
+          const dy = c1.cy - c2.cy;
+          const distSq = dx * dx + dy * dy;
+          const twoRadii = 2 * radius;
+          
+          // Circles intersect if their centers are between 0 and 2*radius apart
+          if (distSq < twoRadii * twoRadii && distSq > 0.001) {
+            const points = getCircleIntersectionPoints(
+              { x: c1.cx, y: c1.cy, r: c1.r },
+              { x: c2.cx, y: c2.cy, r: c2.r }
+            );
+            
+            if (points) {
+              // Ensure consistent ID ordering
+              const ids = [c1.id, c2.id].sort();
+              const pairId = ids.join(':');
+              
+              if (!checkedPairs.has(pairId)) {
+                const lensId = `lens-${ids[0]}-${ids[1]}`;
+                const pathD = createLensPath(
+                  { x: c1.cx, y: c1.cy },
+                  { x: c2.cx, y: c2.cy },
+                  radius,
+                  points
+                );
+                
+                lenses.push({
+                  id: lensId,
+                  pathD: pathD,
+                  circleIds: [c1.id, c2.id],
+                  segment: {
+                    type: 'lens',
+                    circles: [c1.gridPos, c2.gridPos]
+                  }
+                });
+                
+                checkedPairs.add(pairId);
+              }
+            }
+          }
+        }
+      }
+      
+      return { circles, lenses };
+    }
+    
+    // Create outer circle SVG element
+    function createCircleElement(circle, isInner = false) {
+      const circleElement = document.createElementNS(svgNS, "circle");
+      circleElement.setAttribute("id", circle.id);
+      circleElement.setAttribute("cx", circle.cx);
+      circleElement.setAttribute("cy", circle.cy);
+      circleElement.setAttribute("r", circle.r);
+      circleElement.setAttribute("fill", "var(--svg-outer-fill)");
+      circleElement.setAttribute("stroke", "var(--svg-stroke-color)");
+      circleElement.setAttribute("stroke-width", "0.5");
+      circleElement.style.cursor = "pointer";
+      circleElement.style.transition = "fill 0.2s ease";
+      
+      // Add event listeners
+      circleElement.addEventListener('click', e => {
+        e.stopPropagation();
+        setActiveSegment(circle.id);
+      });
+      
+      const group = document.createElementNS(svgNS, "g");
+      group.appendChild(circleElement);
+      
+      // Add letter label outside of the circle
+      const label = document.createElementNS(svgNS, "text");
+      label.setAttribute("x", circle.cx);
+      label.setAttribute("y", circle.cy - circle.r - 5);
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("dominant-baseline", "middle");
+      label.setAttribute("font-size", circle.r * 0.3);
+      label.setAttribute("fill", "var(--svg-label-fill)");
+      label.textContent = "d";
+      
+      group.appendChild(label);
+      
+      return group;
+    }
+    
+    // Create inner circle SVG element
+    function createInnerCircleElement(circle, innerRadius) {
+      const innerCircleId = `inner-${circle.id}`;
+      
+      const innerCircle = document.createElementNS(svgNS, "circle");
+      innerCircle.setAttribute("id", innerCircleId);
+      innerCircle.setAttribute("cx", circle.cx);
+      innerCircle.setAttribute("cy", circle.cy);
+      innerCircle.setAttribute("r", innerRadius);
+      innerCircle.setAttribute("fill", "var(--svg-inner-fill)");
+      innerCircle.setAttribute("stroke", "var(--svg-stroke-color)");
+      innerCircle.setAttribute("stroke-width", "0.5");
+      innerCircle.style.cursor = "pointer";
+      innerCircle.style.transition = "fill 0.2s ease";
+      
+      // Add event listeners
+      innerCircle.addEventListener('click', e => {
+        e.stopPropagation();
+        setActiveSegment(innerCircleId);
+      });
+      
+      // Add text label in the center of inner circle
+      const text = document.createElementNS(svgNS, "text");
+      text.setAttribute("x", circle.cx);
+      text.setAttribute("y", circle.cy);
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "middle");
+      text.setAttribute("font-size", innerRadius * 0.5);
+      text.setAttribute("fill", "var(--svg-inner-label-fill)");
+      text.textContent = "a";
+      
+      const group = document.createElementNS(svgNS, "g");
+      group.appendChild(innerCircle);
+      group.appendChild(text);
+      
+      return group;
+    }
+    
+    // Create lens SVG element
+    function createLensElement(lens) {
+      const lensElement = document.createElementNS(svgNS, "path");
+      lensElement.setAttribute("id", lens.id);
+      lensElement.setAttribute("d", lens.pathD);
+      lensElement.setAttribute("fill", "var(--svg-lens-fill)");
+      lensElement.setAttribute("stroke", "var(--svg-lens-stroke)");
+      lensElement.setAttribute("stroke-width", "0.5");
+      lensElement.style.cursor = "pointer";
+      lensElement.style.transition = "fill 0.2s ease";
+      
+      // Add event listeners
+      lensElement.addEventListener('click', e => {
+        e.stopPropagation();
+        setActiveSegment(lens.id);
+      });
+      
+      return lensElement;
+    }
+    
+    // Handle segment selection
+    function setActiveSegment(id) {
+      activeSegmentId = id;
+      document.getElementById('activeSegment').textContent = `Active Segment: ${id || 'None'}`;
+      
+      // Reset all fills using CSS variables
+      const circles = document.querySelectorAll('circle');
+      circles.forEach(circle => {
+          if (circle.id.startsWith('inner-')) {
+              circle.setAttribute("fill", "var(--svg-inner-fill)");
+          } else if (circle.id.startsWith('circ-')) { // Target only the main circles
+              circle.setAttribute("fill", "var(--svg-outer-fill)");
+          }
+      });
+      
+      const lenses = document.querySelectorAll('path');
+      lenses.forEach(lens => {
+          lens.setAttribute("fill", "var(--svg-lens-fill)");
+      });
+      
+      // Highlight active segment using CSS variables
+      if (id) {
+        const element = document.getElementById(id);
+        if (element) {
+          if (element.tagName === 'circle') {
+            if (id.startsWith('inner-')) {
+              element.setAttribute("fill", "var(--highlight-inner-fill)");
+            } else {
+              element.setAttribute("fill", "var(--highlight-outer-fill)");
+            }
+          } else if (element.tagName === 'path') {
+            element.setAttribute("fill", "var(--highlight-lens-fill)");
+          }
+        }
+      }
+    }
+    
+    // --- Geometry Helper Functions ---
+    
+    // Calculate intersection points of two circles
+    function getCircleIntersectionPoints(c1, c2) {
+      const dx = c2.x - c1.x;
+      const dy = c2.y - c1.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      
+      // Check for solvability
+      if (d > c1.r + c2.r || d < Math.abs(c1.r - c2.r) || d === 0) {
+        return null; // No intersection or circles are identical
+      }
+      
+      const a = (c1.r * c1.r - c2.r * c2.r + d * d) / (2 * d);
+      const h = Math.sqrt(Math.max(0, c1.r * c1.r - a * a)); // Ensure h is not NaN
+      
+      const x2 = c1.x + (a * dx) / d;
+      const y2 = c1.y + (a * dy) / d;
+      
+      const p1 = {
+        x: x2 + (h * dy) / d,
+        y: y2 - (h * dx) / d,
+      };
+      
+      const p2 = {
+        x: x2 - (h * dy) / d,
+        y: y2 + (h * dx) / d,
+      };
+      
+      return [p1, p2];
+    }
+    
+    // Create SVG path for a lens shape
+    function createLensPath(center1, center2, radius, intersectionPoints) {
+      const [p1, p2] = intersectionPoints;
+      
+      // For a lens from equal radii, we use 0 for large-arc-flag
+      const largeArcFlag = 0;
+      const sweepFlag1 = 1;
+      const sweepFlag2 = 1;
+      
+      // Path: Move to P1, Arc1 to P2, Arc2 back to P1
+      return `M ${p1.x} ${p1.y} A ${radius} ${radius} 0 ${largeArcFlag} ${sweepFlag1} ${p2.x} ${p2.y} A ${radius} ${radius} 0 ${largeArcFlag} ${sweepFlag2} ${p1.x} ${p1.y} Z`;
+    }
+
+    // Toggle day/night theme
+    function toggleTheme() {
+        const isNight = document.body.classList.toggle('night-mode');
+        const themeToggleButton = document.getElementById('themeToggle');
+        if (isNight) {
+            localStorage.setItem('theme', 'night');
+            themeToggleButton.textContent = 'Day Mode';
+        } else {
+            localStorage.setItem('theme', 'day');
+            themeToggleButton.textContent = 'Night Mode';
+        }
+        // Re-apply highlight colors using the new theme variables
+        setActiveSegment(activeSegmentId);
+    }
+  </script>
+</body>
+</html> 
