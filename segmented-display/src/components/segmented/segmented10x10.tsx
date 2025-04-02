@@ -32,6 +32,7 @@ const SegmentedDisplay10x10: React.FC = () => {
   const [activeSegments, setActiveSegments] = useState<Set<string>>(new Set());
   const [lastSelectedDot, setLastSelectedDot] = useState<string | null>(null);
   const [doubleActivatedB, setDoubleActivatedB] = useState<Set<string>>(new Set());
+  const [dSegmentClickState, setDSegmentClickState] = useState<Map<string, number>>(new Map()); // State for 'd' segment clicks
   
   // Spacing calculated from factor and radius
   const spacing = outerRadius * spacingFactor;
@@ -52,76 +53,181 @@ const SegmentedDisplay10x10: React.FC = () => {
   const segmentHelpers = {
     // ... existing helper functions ...
     toggleSegment: (id: string) => {
-      setActiveSegments(prev => {
-        const newSet = new Set(prev);
-        
-        // Handle c segment special case (horizontal lens)
-        if (id.startsWith('c-')) {
-          const [_, row, col] = id.split('-');
-          const iSegment = `i-${row}-${col}`;
+      // Check if it's a 'd' segment
+      if (id.startsWith('d-')) {
+        const { row, col } = parseSegmentId(id);
 
-          if (!newSet.has(id) && !newSet.has(iSegment)) {
-            // First click - activate c
-            newSet.add(id);
-          } else if (newSet.has(id) && !newSet.has(iSegment)) {
-            // Second click - deactivate c and activate i
-            newSet.delete(id);
-            newSet.add(iSegment);
+        // Get associated segment IDs
+        const eSegment = `e-${row + 1}-${col + 1}`;
+        const fSegment = `f-${row + 1}-${col}`;
+        const gSegment = `g-${row}-${col + 1}`;
+        const hSegment = `h-${row}-${col}`;
+
+        setDSegmentClickState(prevMap => {
+          const currentClickState = prevMap.get(id) || 0;
+          const nextClickState = (currentClickState + 1) % 3;
+
+          const newMap = new Map(prevMap);
+          if (nextClickState === 0) {
+            newMap.delete(id); // Reset on third click (state 0)
           } else {
-            // Third click (or clicking c when i is active) - deactivate i
-            newSet.delete(iSegment);
+            newMap.set(id, nextClickState);
           }
-          
-          setLastSelectedDot(null);
-          return newSet;
-        }
-        
-        // If this is an inner circle (dot)
-        if (isInnerCircle(id)) {
-          // If we already have a last selected dot
+
+          // Update active segments based on the *next* state
+          setActiveSegments(prevActive => {
+            const newActive = new Set(prevActive);
+
+            if (nextClickState === 1) { // First click -> state 1
+              newActive.add(id);       // Activate d
+              newActive.add(fSegment);  // Activate f
+              newActive.add(gSegment);  // Activate g
+              newActive.delete(eSegment); // Deactivate e
+              newActive.delete(hSegment); // Deactivate h
+            } else if (nextClickState === 2) { // Second click -> state 2
+              newActive.add(id);       // Keep d active
+              newActive.delete(fSegment); // Deactivate f
+              newActive.delete(gSegment); // Deactivate g
+              newActive.add(eSegment);  // Activate e
+              newActive.add(hSegment);  // Activate h
+            } else { // Third click -> state 0
+              newActive.delete(id);       // Deactivate d
+              newActive.delete(eSegment); // Deactivate e
+              newActive.delete(fSegment); // Deactivate f
+              newActive.delete(gSegment); // Deactivate g
+              newActive.delete(hSegment); // Deactivate h
+            }
+            return newActive;
+          });
+
+          setLastSelectedDot(null); // Reset dot selection if a 'd' was clicked
+          return newMap;
+        });
+
+      } else {
+        // This block handles non-'d' clicks: 'a', 'c', 'b', 'e', 'f', 'g', 'h'
+
+        // Parse ID once
+        const { type, row, col } = parseSegmentId(id);
+
+        // --- Handle 'a' segments (dots) FIRST and return --- 
+        if (type === 'a') { 
           if (lastSelectedDot) {
+            // Calculate potential connection and state updates
             const startPoint = parseSegmentId(lastSelectedDot);
-            const endPoint = parseSegmentId(id);
-            
-            // Try horizontal connection first
+            const endPoint = { type, row, col };
+            let nextActiveSegments = new Set(activeSegments); // Start with current state
+            let dStateUpdate: { id: string; state: number } | null = null;
+            let nextLastSelectedDot: string | null = null;
+
             const horizontalSegments = getHorizontalSegments(startPoint, endPoint);
             if (horizontalSegments.length > 0) {
-              horizontalSegments.forEach(segment => newSet.add(segment));
-              newSet.add(id); // Add the current dot
-              setLastSelectedDot(null); // Reset last selected dot
-              return newSet;
+              // Create horizontal connection
+              horizontalSegments.forEach(segment => nextActiveSegments.add(segment));
+              nextActiveSegments.add(id); // Add the clicked dot
+              nextLastSelectedDot = null; // Reset dot selection
+            } else {
+              const diagonalSegments = getDiagonalSegments(startPoint, endPoint);
+              if (diagonalSegments.length > 0) {
+                // Try diagonal connection
+                const dSegmentId = diagonalSegments.find(s => s.startsWith('d-'));
+                let conflict = false;
+                if (dSegmentId) {
+                  // Check conflict with opposite diagonal based on *current* activeSegments
+                  const { row: dRow, col: dCol } = parseSegmentId(dSegmentId);
+                  const allQuadrants = [ `e-${dRow + 1}-${dCol + 1}`, `f-${dRow + 1}-${dCol}`, `g-${dRow}-${dCol + 1}`, `h-${dRow}-${dCol}` ];
+                  const oppositeQuadrants = allQuadrants.filter(q => !diagonalSegments.includes(q));
+                  if (oppositeQuadrants.some(q => activeSegments.has(q))) {
+                    conflict = true;
+                  }
+                }
+
+                if (!conflict) {
+                  diagonalSegments.forEach(segment => nextActiveSegments.add(segment));
+                  // Set d-state if connection made
+                  if (dSegmentId) {
+                    const isEH = diagonalSegments.some(s => s.startsWith('e-') || s.startsWith('h-'));
+                    dStateUpdate = { id: dSegmentId, state: isEH ? 2 : 1 };
+                  }
+                }
+                // Always add the clicked dot itself, even if connection conflicted
+                nextActiveSegments.add(id);
+                nextLastSelectedDot = null; // Reset dot selection after any connection attempt
+              } else {
+                 // No connection made - Toggle the second dot clicked and clear selection
+                 if (nextActiveSegments.has(id)) {
+                   nextActiveSegments.delete(id);
+                 } else {
+                   nextActiveSegments.add(id);
+                 }
+                 nextLastSelectedDot = null; // Clear selection as no connection formed
+              }
             }
             
-            // If not horizontal, try diagonal
-            const diagonalSegments = getDiagonalSegments(startPoint, endPoint);
-            if (diagonalSegments.length > 0) {
-              diagonalSegments.forEach(segment => newSet.add(segment));
-              newSet.add(id); // Add the current dot
-              setLastSelectedDot(null); // Reset last selected dot
-              return newSet;
+            // Apply the calculated state updates
+            setActiveSegments(nextActiveSegments);
+            if (dStateUpdate) {
+              setDSegmentClickState(prevMap => new Map(prevMap).set(dStateUpdate!.id, dStateUpdate!.state));
             }
-          }
-          
-          // Toggle the current dot and update last selected
-          if (newSet.has(id)) {
-            newSet.delete(id);
-            setLastSelectedDot(null);
+            setLastSelectedDot(nextLastSelectedDot);
+
           } else {
-            newSet.add(id);
+            // No lastSelectedDot: This is the first dot clicked in a potential pair
+            setActiveSegments(prev => new Set(prev).add(id));
             setLastSelectedDot(id);
           }
-        } else {
-          // For non-dot segments, just toggle normally
+          return; // <-- Crucial: Stop processing after handling 'a'
+        }
+        
+        // --- Handle 'c', 'b', 'e', 'f', 'g', 'h' clicks --- 
+        // Apply updates using a single setActiveSegments call for these types
+        setActiveSegments(prev => {
+          const newSet = new Set(prev);
+          // type, row, col are already parsed from the ID clicked
+
+          if (type === 'c') {
+            const iSegment = `i-${row}-${col}`;
+            if (!newSet.has(id) && !newSet.has(iSegment)) { newSet.add(id); }
+            else if (newSet.has(id) && !newSet.has(iSegment)) { newSet.delete(id); newSet.add(iSegment); }
+            else { newSet.delete(iSegment); }
+            setLastSelectedDot(null); // Okay to call setter for other state here
+            return newSet;
+          }
+
+          if (['e', 'f', 'g', 'h'].includes(type)) {
+             let associatedDId: string | null = null;
+             if (type === 'e') associatedDId = `d-${row - 1}-${col - 1}`;
+             else if (type === 'f') associatedDId = `d-${row - 1}-${col}`;
+             else if (type === 'g') associatedDId = `d-${row}-${col - 1}`;
+             else if (type === 'h') associatedDId = `d-${row}-${col}`;
+
+             if (associatedDId) {
+               const dParts = parseSegmentId(associatedDId);
+               // Ensure d coords are valid before checking quadrants
+               if (dParts.row >= 0 && dParts.row < 9 && dParts.col >= 0 && dParts.col < 9) {
+                 const eQ = `e-${dParts.row + 1}-${dParts.col + 1}`, fQ = `f-${dParts.row + 1}-${dParts.col}`;
+                 const gQ = `g-${dParts.row}-${dParts.col + 1}`, hQ = `h-${dParts.row}-${dParts.col}`;
+                 // Check conflict based on the *current* state within the callback (newSet)
+                 if ((type === 'e' || type === 'h') && (newSet.has(fQ) || newSet.has(gQ))) { return newSet; } // Block click
+                 if ((type === 'f' || type === 'g') && (newSet.has(eQ) || newSet.has(hQ))) { return newSet; } // Block click
+               }
+             }
+             // No conflict, toggle normally
+             if (newSet.has(id)) { newSet.delete(id); } else { newSet.add(id); }
+             setLastSelectedDot(null);
+             return newSet;
+          }
+
+          // Fallback for other types (e.g., 'b')
           if (newSet.has(id)) {
             newSet.delete(id);
           } else {
             newSet.add(id);
           }
           setLastSelectedDot(null);
-        }
-        
-        return newSet;
-      });
+          return newSet; // Ensure all paths return a Set
+        });
+      }
     },
     
     getFill: (id: string) => {
