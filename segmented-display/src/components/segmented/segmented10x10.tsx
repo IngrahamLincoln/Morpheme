@@ -34,6 +34,7 @@ const SegmentedDisplay10x10: React.FC = () => {
   const [doubleActivatedB, setDoubleActivatedB] = useState<Set<string>>(new Set());
   const [dSegmentClickState, setDSegmentClickState] = useState<Map<string, number>>(new Map()); // State for 'd' segment clicks
   const [isAddOnlyMode, setIsAddOnlyMode] = useState(false); // State for Add Only mode
+  const [showInactiveDotGrid, setShowInactiveDotGrid] = useState(false); // State for inactive dot grid
   
   // Spacing calculated from factor and radius
   const spacing = outerRadius * spacingFactor;
@@ -696,25 +697,54 @@ const SegmentedDisplay10x10: React.FC = () => {
       }
     });
     
-    // Draw inner circles
+    // Draw inner circles ('a' segments) OR inactive dots
     centers.forEach((center) => {
       const id = `a-${center.row}-${center.col}`;
-      elements.push(
-        <circle
-          key={id}
-          cx={center.x}
-          cy={center.y}
-          r={innerRadius}
-          fill={segmentHelpers.getFill(id)}
-          stroke={showOutlines ? "black" : "none"}
-          strokeWidth="1"
-          onClick={() => segmentHelpers.toggleSegment(id)}
-          className="cursor-pointer hover:opacity-80"
-        />
-      );
+      const isActive = activeSegments.has(id);
+
+      if (isActive) {
+        // Render the normal ACTIVE circle
+        elements.push(
+          <circle
+            key={id} cx={center.x} cy={center.y} r={innerRadius}
+            fill={segmentHelpers.getFill(id)} stroke={showOutlines ? "black" : "none"} strokeWidth="1"
+            onClick={() => segmentHelpers.toggleSegment(id)} className="cursor-pointer hover:opacity-80"
+          />
+        );
+      } else {
+        // Handle INACTIVE 'a' segment based on the toggle
+        if (showInactiveDotGrid) {
+          // Render small VISUAL grey dot (no interaction)
+          elements.push(
+            <circle
+              key={id + '-inactive-dot-visual'} cx={center.x} cy={center.y} r={3} fill="grey"
+              pointerEvents="none" // Make the visual dot non-interactive
+            />
+          );
+          // Render larger TRANSPARENT click target
+          elements.push(
+             <circle
+               key={id + '-inactive-dot-target'} cx={center.x} cy={center.y} r={innerRadius * 0.8} // Larger radius (e.g., 80% of inner)
+               fill="transparent" // Invisible
+               onClick={() => segmentHelpers.toggleSegment(id)} // Attach click handler here
+               className="cursor-pointer" // Show pointer cursor on hover
+             />
+          );
+        } else {
+          // Render the normal INACTIVE (white) circle
+          elements.push(
+            <circle
+              key={id} cx={center.x} cy={center.y} r={innerRadius}
+              fill={segmentHelpers.getFill(id)} // Will be white
+              stroke={showOutlines ? "black" : "none"} strokeWidth="1"
+              onClick={() => segmentHelpers.toggleSegment(id)} className="cursor-pointer hover:opacity-80"
+            />
+          );
+        }
+      }
     });
     
-    // Draw horizontal connectors - only draw them if they're active
+    // Draw horizontal connectors ('i' segments) - only if active
     centers.forEach((center) => {
       if (typeof center.col === 'number' && center.col < 9) {
         const id = `i-${center.row}-${center.col}`;
@@ -842,7 +872,7 @@ const SegmentedDisplay10x10: React.FC = () => {
     }
     
     return elements;
-  }, [centers, outerRadius, innerRadius, activeSegments, showLabels, useColors, showOutlines]);
+  }, [centers, outerRadius, innerRadius, activeSegments, showLabels, useColors, showOutlines, showInactiveDotGrid]);
   
   // Clear all segments
   const clearAllSegments = () => {
@@ -943,6 +973,17 @@ const SegmentedDisplay10x10: React.FC = () => {
             }}
           >
             {isAddOnlyMode ? 'On' : 'Off'}
+          </button>
+        </div>
+
+        {/* Inactive Dot Grid Toggle */}
+        <div className="flex items-center gap-2">
+          <label className="font-medium">Dot Grid:</label>
+          <button
+            className={`px-3 py-1 rounded ${showInactiveDotGrid ? 'bg-purple-500 text-white' : 'bg-gray-200'}`}
+            onClick={() => setShowInactiveDotGrid(prev => !prev)}
+          >
+            {showInactiveDotGrid ? 'On' : 'Off'}
           </button>
         </div>
       </div>
