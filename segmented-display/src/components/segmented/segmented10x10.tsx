@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { JSX } from 'react';
-import { getDiagonalSegments, getHorizontalSegments, parseSegmentId, isInnerCircle } from './behaviors';
+import { getDiagonalSegments, getHorizontalSegments, parseSegmentId, isInnerCircle, handleCircleDeselection } from './behaviors';
 
 interface Point {
   x: number;
@@ -169,12 +169,103 @@ const SegmentedDisplay10x10: React.FC = () => {
             if (dStateUpdate) {
               setDSegmentClickState(prevMap => new Map(prevMap).set(dStateUpdate!.id, dStateUpdate!.state));
             }
+            // --- Add cleanup for deselected dot --- 
+            else if (!nextActiveSegments.has(id) && activeSegments.has(id)) { // Check if the dot was just deselected
+              const { row: deselectRow, col: deselectCol } = parseSegmentId(id);
+              let dStatesToDelete: string[] = [];
+              
+              // Check/delete horizontal connectors
+              const leftI = `i-${deselectRow}-${deselectCol - 1}`;
+              const rightI = `i-${deselectRow}-${deselectCol}`;
+              if (nextActiveSegments.has(leftI)) nextActiveSegments.delete(leftI);
+              if (nextActiveSegments.has(rightI)) nextActiveSegments.delete(rightI);
+              
+              // Check/delete diagonal connectors (Corrected Logic)
+              const potentialDIds = [
+                `d-${deselectRow - 1}-${deselectCol - 1}`, // d above-left relative to dot
+                `d-${deselectRow - 1}-${deselectCol}`,   // d above-right relative to dot
+                `d-${deselectRow}-${deselectCol - 1}`,   // d below-left relative to dot
+                `d-${deselectRow}-${deselectCol}`,     // d below-right relative to dot
+              ];
+              
+              for (const dId of potentialDIds) {
+                try {
+                  const dParts = parseSegmentId(dId);
+                  if (dParts.row >= 0 && dParts.row < 9 && dParts.col >= 0 && dParts.col < 9) {
+                    if (nextActiveSegments.has(dId)) {
+                      // Found the active 'd' connected to the deselected 'a' dot
+                      nextActiveSegments.delete(dId);
+                      dStatesToDelete.push(dId); // Mark for state map deletion
+
+                      // Delete all associated quadrants
+                      const eQ = `e-${dParts.row + 1}-${dParts.col + 1}`;
+                      const fQ = `f-${dParts.row + 1}-${dParts.col}`;
+                      const gQ = `g-${dParts.row}-${dParts.col + 1}`;
+                      const hQ = `h-${dParts.row}-${dParts.col}`;
+                      if (nextActiveSegments.has(eQ)) nextActiveSegments.delete(eQ);
+                      if (nextActiveSegments.has(fQ)) nextActiveSegments.delete(fQ);
+                      if (nextActiveSegments.has(gQ)) nextActiveSegments.delete(gQ);
+                      if (nextActiveSegments.has(hQ)) nextActiveSegments.delete(hQ);
+
+                      break; // Found the connected diagonal, no need to check others
+                    }
+                  }
+                } catch (e) { /* ignore if parseSegmentId fails (out of bounds) */ }
+              }
+              
+              // Update dSegmentClickState if any diagonals were deleted
+              if (dStatesToDelete.length > 0) {
+                 setDSegmentClickState(prevMap => {
+                   const newMap = new Map(prevMap);
+                   dStatesToDelete.forEach(dId => newMap.delete(dId));
+                   return newMap;
+                 });
+              }
+               // Need to update active segments explicitly here since we potentially modified nextActiveSegments
+               setActiveSegments(nextActiveSegments); 
+            }
+            // --- End cleanup ---
             setLastSelectedDot(nextLastSelectedDot);
 
           } else {
-            // No lastSelectedDot: This is the first dot clicked in a potential pair
-            setActiveSegments(prev => new Set(prev).add(id));
-            setLastSelectedDot(id);
+            // No lastSelectedDot: This is the first dot clicked OR a deselection when no other dot was selected
+            let nextActiveSegments = new Set(activeSegments);
+            let nextLastSelectedDot: string | null = null;
+            let segmentsToDeactivate: string[] = []; // Initialize outside the if
+
+            if (nextActiveSegments.has(id)) {
+              // Deselecting the dot
+              
+              // *** First, determine which segments to deactivate based on the *current* activeSegments state ***
+              segmentsToDeactivate = handleCircleDeselection(id, activeSegments); // Pass current activeSegments
+              
+              // *** Then, remove the dot itself from the new set ***
+              nextActiveSegments.delete(id);
+              nextLastSelectedDot = null;
+              
+              // *** Finally, deactivate the connected segments in the new set ***
+              segmentsToDeactivate.forEach(segmentId => {
+                nextActiveSegments.delete(segmentId);
+                // If it's a diamond segment, also clear its click state
+                if (segmentId.startsWith('d-')) {
+                  setDSegmentClickState(prevMap => {
+                    const newMap = new Map(prevMap);
+                    newMap.delete(segmentId);
+                    return newMap;
+                  });
+                }
+              });
+
+            } else {
+              // Selecting the dot (first of a potential pair)
+              nextActiveSegments.add(id);
+              nextLastSelectedDot = id;
+            }
+
+            // Apply state updates for this case
+            setActiveSegments(nextActiveSegments);
+            // Do not update dSegmentClickState here
+            setLastSelectedDot(nextLastSelectedDot); // Will be null if deselected, or id if selected
           }
           return; // <-- Crucial: Stop processing after handling 'a'
         }
@@ -187,9 +278,14 @@ const SegmentedDisplay10x10: React.FC = () => {
 
           if (type === 'c') {
             const iSegment = `i-${row}-${col}`;
-            if (!newSet.has(id) && !newSet.has(iSegment)) { newSet.add(id); }
-            else if (newSet.has(id) && !newSet.has(iSegment)) { newSet.delete(id); newSet.add(iSegment); }
-            else { newSet.delete(iSegment); }
+            // Toggle the associated 'i' segment directly
+            if (newSet.has(iSegment)) {
+              newSet.delete(iSegment);
+            } else {
+              newSet.add(iSegment);
+            }
+            // Ensure the 'c' segment itself is never active
+            newSet.delete(id); 
             setLastSelectedDot(null); // Okay to call setter for other state here
             return newSet;
           }
@@ -470,8 +566,6 @@ const SegmentedDisplay10x10: React.FC = () => {
             fill={segmentHelpers.getFill(id)}
             stroke={showOutlines ? "black" : "none"}
             strokeWidth="1"
-            onClick={() => segmentHelpers.toggleSegment(id)}
-            className="cursor-pointer hover:opacity-80"
           />
         );
       });
