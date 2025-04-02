@@ -16,6 +16,16 @@ interface IntersectionPoints {
   p2: Point;
 }
 
+// Define the structure for the adjacency list
+interface AdjacencyList {
+  dots: string[];
+  connections: {
+    type: 'horizontal' | 'diagonal';
+    dot1: string;
+    dot2: string;
+  }[];
+}
+
 const SegmentedDisplay10x10: React.FC = () => {
   // Configuration state - using smaller default values for the 10x10 grid
   const [outerRadius, setOuterRadius] = useState(47); // Original radius
@@ -35,6 +45,10 @@ const SegmentedDisplay10x10: React.FC = () => {
   const [dSegmentClickState, setDSegmentClickState] = useState<Map<string, number>>(new Map()); // State for 'd' segment clicks
   const [isAddOnlyMode, setIsAddOnlyMode] = useState(false); // State for Add Only mode
   const [showInactiveDotGrid, setShowInactiveDotGrid] = useState(false); // State for inactive dot grid
+  
+  // New state for saving/loading adjacency list
+  const [adjacencyListOutput, setAdjacencyListOutput] = useState<string>('');
+  const [adjacencyListInput, setAdjacencyListInput] = useState<string>('');
   
   // Spacing calculated from factor and radius
   const spacing = outerRadius * spacingFactor;
@@ -872,7 +886,7 @@ const SegmentedDisplay10x10: React.FC = () => {
     }
     
     return elements;
-  }, [centers, outerRadius, innerRadius, activeSegments, showLabels, useColors, showOutlines, showInactiveDotGrid]);
+  }, [centers, outerRadius, innerRadius, activeSegments, showLabels, useColors, showOutlines, showInactiveDotGrid, dSegmentClickState, segmentHelpers]);
   
   // Clear all segments
   const clearAllSegments = () => {
@@ -880,6 +894,8 @@ const SegmentedDisplay10x10: React.FC = () => {
     setDSegmentClickState(new Map()); // Clear diamond states too
     setLastSelectedDot(null);
     setIsAddOnlyMode(false); // Turn off Add Only mode
+    setAdjacencyListOutput(''); // Clear output on clear
+    setAdjacencyListInput(''); // Clear input on clear
   };
   
   // Activate all segments
@@ -917,11 +933,141 @@ const SegmentedDisplay10x10: React.FC = () => {
     setDSegmentClickState(new Map()); // Clear diamond states
     setLastSelectedDot(null);
     setIsAddOnlyMode(false); // Turn off Add Only mode
+    setAdjacencyListOutput(''); // Clear output
+    setAdjacencyListInput(''); // Clear input
   };
   
   // Toggle display settings
   const toggleLabels = () => setShowLabels(prev => !prev);
   const toggleColors = () => setUseColors(prev => !prev);
+  
+  // --- Save State Function ---
+  const handleSave = () => {
+    const dots = new Set<string>();
+    const connections: AdjacencyList['connections'] = [];
+
+    activeSegments.forEach(segmentId => {
+      if (segmentId.startsWith('a-')) {
+        dots.add(segmentId);
+      } else if (segmentId.startsWith('i-')) {
+        const { row, col } = parseSegmentId(segmentId);
+        const dot1 = `a-${row}-${col}`;
+        const dot2 = `a-${row}-${col + 1}`;
+        // Ensure both connected dots are also active before saving connection
+        if (activeSegments.has(dot1) && activeSegments.has(dot2)) {
+          dots.add(dot1);
+          dots.add(dot2);
+          connections.push({ type: 'horizontal', dot1, dot2 });
+        }
+      } else if (segmentId.startsWith('d-')) {
+        const { row, col } = parseSegmentId(segmentId);
+        const state = dSegmentClickState.get(segmentId);
+        let dot1: string | null = null;
+        let dot2: string | null = null;
+
+        // Determine connected dots based on d-state or active quadrants
+        // State 1: f & g are active (TopRight <-> BottomLeft)
+        if (state === 1 || (activeSegments.has(`f-${row + 1}-${col}`) && activeSegments.has(`g-${row}-${col + 1}`))) {
+           dot1 = `a-${row}-${col + 1}`; // Top-right dot
+           dot2 = `a-${row + 1}-${col}`; // Bottom-left dot
+        }
+        // State 2: e & h are active (TopLeft <-> BottomRight)
+        else if (state === 2 || (activeSegments.has(`e-${row + 1}-${col + 1}`) && activeSegments.has(`h-${row}-${col}`))) {
+           dot1 = `a-${row}-${col}`;     // Top-left dot
+           dot2 = `a-${row + 1}-${col + 1}`; // Bottom-right dot
+        }
+
+        if (dot1 && dot2 && activeSegments.has(dot1) && activeSegments.has(dot2)) {
+          dots.add(dot1);
+          dots.add(dot2);
+          connections.push({ type: 'diagonal', dot1, dot2 });
+        }
+      }
+    });
+
+    const output: AdjacencyList = {
+      dots: Array.from(dots).sort(), // Sort for consistency
+      connections: connections.sort((a, b) => a.dot1.localeCompare(b.dot1) || a.dot2.localeCompare(b.dot2)) // Sort for consistency
+    };
+
+    setAdjacencyListOutput(JSON.stringify(output, null, 2)); // Pretty print
+  };
+
+  // --- Load State Function ---
+  const handleLoad = () => {
+    try {
+      const inputData: AdjacencyList = JSON.parse(adjacencyListInput);
+
+      if (!inputData || !Array.isArray(inputData.dots) || !Array.isArray(inputData.connections)) {
+        throw new Error("Invalid adjacency list format.");
+      }
+
+      const newActiveSegments = new Set<string>();
+      const newDSegmentState = new Map<string, number>();
+
+      // 1. Add all dots
+      inputData.dots.forEach(dotId => {
+        if (dotId.startsWith('a-')) {
+          newActiveSegments.add(dotId);
+        } else {
+          console.warn(`Skipping invalid dot ID during load: ${dotId}`);
+        }
+      });
+
+      // 2. Process connections and derive segments
+      inputData.connections.forEach(conn => {
+        const { type, dot1, dot2 } = conn;
+        const p1 = parseSegmentId(dot1);
+        const p2 = parseSegmentId(dot2);
+
+        // Ensure both dots are valid and in the loaded dots list
+        if (!dot1.startsWith('a-') || !dot2.startsWith('a-') || !newActiveSegments.has(dot1) || !newActiveSegments.has(dot2)) {
+          console.warn(`Skipping connection with invalid or missing dots: ${dot1}, ${dot2}`);
+          return;
+        }
+
+        if (type === 'horizontal') {
+          const horizontalSegs = getHorizontalSegments(p1, p2);
+          if (horizontalSegs.length > 0) {
+            horizontalSegs.forEach(seg => newActiveSegments.add(seg));
+          } else {
+             console.warn(`Could not derive horizontal segment for connection: ${dot1}, ${dot2}`);
+          }
+        } else if (type === 'diagonal') {
+          const diagonalSegs = getDiagonalSegments(p1, p2);
+          if (diagonalSegs.length > 0) {
+            let dSegmentId: string | null = null;
+            let dState = 0;
+            diagonalSegs.forEach(seg => {
+              newActiveSegments.add(seg);
+              if (seg.startsWith('d-')) dSegmentId = seg;
+              // Determine state based on quadrants added by getDiagonalSegments
+              if (seg.startsWith('f-') || seg.startsWith('g-')) dState = 1;
+              else if (seg.startsWith('e-') || seg.startsWith('h-')) dState = 2;
+            });
+            if (dSegmentId && dState > 0) {
+              newDSegmentState.set(dSegmentId, dState);
+            } else {
+               console.warn(`Could not derive diagonal segments or state for connection: ${dot1}, ${dot2}`);
+            }
+          } else {
+            console.warn(`Could not derive diagonal segments for connection: ${dot1}, ${dot2}`);
+          }
+        }
+      });
+
+      // Update state
+      setActiveSegments(newActiveSegments);
+      setDSegmentClickState(newDSegmentState);
+      setLastSelectedDot(null); // Reset selection state
+      setIsAddOnlyMode(false); // Ensure normal mode after load
+      setAdjacencyListOutput(''); // Clear output area
+
+    } catch (error) {
+      console.error("Error loading adjacency list:", error);
+      alert(`Failed to load state: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   
   return (
     <div className="p-4">
@@ -988,6 +1134,42 @@ const SegmentedDisplay10x10: React.FC = () => {
         </div>
       </div>
       
+      {/* --- Save/Load UI --- */}
+      <div className="my-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Save Area */}
+        <div>
+          <button
+            className="mb-2 px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600"
+            onClick={handleSave}
+          >
+            Save Current State
+          </button>
+          <textarea
+            readOnly
+            value={adjacencyListOutput}
+            placeholder="Click 'Save Current State' to generate the adjacency list here..."
+            className="w-full h-40 p-2 border rounded bg-gray-100 font-mono text-sm"
+          />
+        </div>
+
+        {/* Load Area */}
+        <div>
+          <button
+            className="mb-2 px-4 py-2 bg-teal-500 text-white rounded hover:bg-teal-600 disabled:opacity-50"
+            onClick={handleLoad}
+            disabled={!adjacencyListInput.trim()}
+          >
+            Load State from Input
+          </button>
+          <textarea
+            value={adjacencyListInput}
+            onChange={(e) => setAdjacencyListInput(e.target.value)}
+            placeholder="Paste an adjacency list JSON here and click 'Load State'..."
+            className="w-full h-40 p-2 border rounded font-mono text-sm"
+          />
+        </div>
+      </div>
+      
       {/* SVG Display */}
       <div className="border border-gray-300 rounded p-4 bg-gray-100 overflow-auto">
         <svg 
@@ -1011,7 +1193,7 @@ const SegmentedDisplay10x10: React.FC = () => {
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
           onClick={activateAllSegments}
         >
-          Activate All
+          Activate All (Visual Only)
         </button>
       </div>
       
