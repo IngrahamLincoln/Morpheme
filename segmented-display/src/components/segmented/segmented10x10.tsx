@@ -33,6 +33,7 @@ const SegmentedDisplay10x10: React.FC = () => {
   const [lastSelectedDot, setLastSelectedDot] = useState<string | null>(null);
   const [doubleActivatedB, setDoubleActivatedB] = useState<Set<string>>(new Set());
   const [dSegmentClickState, setDSegmentClickState] = useState<Map<string, number>>(new Map()); // State for 'd' segment clicks
+  const [isAddOnlyMode, setIsAddOnlyMode] = useState(false); // State for Add Only mode
   
   // Spacing calculated from factor and radius
   const spacing = outerRadius * spacingFactor;
@@ -57,10 +58,9 @@ const SegmentedDisplay10x10: React.FC = () => {
       // --- Handle 'd' segments FIRST ---
       if (id.startsWith('d-')) {
         const { row, col } = parseSegmentId(id);
-        const iAboveId = `i-${row}-${col}`;
-        const iBelowId = `i-${row + 1}-${col}`;
+        const iAboveId = `i-${row}-${col}`; const iBelowId = `i-${row + 1}-${col}`;
         if (activeSegments.has(iAboveId) || activeSegments.has(iBelowId)) {
-          console.log(`Blocked d-${row}-${col} activation due to active i: ${iAboveId} or ${iBelowId}`);
+          console.log(`Normal Mode: Blocked d-${row}-${col} activation due to active i: ${iAboveId} or ${iBelowId}`);
           return;
         }
         // ... (rest of 'd' logic: setDSegmentClickState and setActiveSegments) ...
@@ -114,154 +114,198 @@ const SegmentedDisplay10x10: React.FC = () => {
 
       // --- Handle 'a' segments (dots) ---
       if (id.startsWith('a-')) {
-         // ... (existing 'a' logic with correct i/d conflict checks) ...
          const { type, row, col } = parseSegmentId(id); // Parse clicked dot ID
 
-         if (lastSelectedDot) {
-            // This is the second dot clicked
-            const startPoint = parseSegmentId(lastSelectedDot);
-            const endPoint = { type, row, col };
-            let nextActiveSegments = new Set(activeSegments); // Start with current state
-            let dStateUpdate: { id: string; state: number } | null = null;
-            let nextLastSelectedDot: string | null = null;
+         if (isAddOnlyMode) {
+             // --- Add Only Mode Logic ---
+             let nextActiveSegments = new Set(activeSegments);
+             let dStateUpdate: { id: string; state: number } | null = null;
+             let nextLastSelectedDot = lastSelectedDot; // Start assuming no change
+             let connectionMade = false; // Track if a valid connection was made or dot activated
 
-            const horizontalSegments = getHorizontalSegments(startPoint, endPoint);
-            const diagonalSegments = getDiagonalSegments(startPoint, endPoint);
+             if (!lastSelectedDot) {
+                 // First dot clicked in Add Only mode
+                 nextActiveSegments.add(id);
+                 nextLastSelectedDot = id;
+                 connectionMade = true; // Mark activation as success
+             } else {
+                 // Subsequent dot clicked - check for connection
+                 const startPoint = parseSegmentId(lastSelectedDot);
+                 const endPoint = { type, row, col };
+                 const horizontalSegments = getHorizontalSegments(startPoint, endPoint);
+                 const diagonalSegments = getDiagonalSegments(startPoint, endPoint);
 
-            if (horizontalSegments.length > 0) {
-              // Attempt horizontal connection ('i' segment)
-              const iSegment = horizontalSegments.find(s => s.startsWith('i-'));
-              let iConflict = false;
-              if (iSegment) {
-                 const { row: iRow, col: iCol } = parseSegmentId(iSegment);
-                 const dAboveId = `d-${iRow - 1}-${iCol}`;
-                 const dBelowId = `d-${iRow}-${iCol}`;
-
-                 // --- Check for conflicting 'd' before adding 'i' ---
-                 // Use the current activeSegments state for the check
-                 if (activeSegments.has(dAboveId) || activeSegments.has(dBelowId)) {
-                   iConflict = true;
-                   console.log(`Blocked i-${iRow}-${iCol} activation via connection due to active d: ${dAboveId} or ${dBelowId}`);
-                 }
-                 // --- End check ---
-              }
-
-              if (!iConflict) {
-                 horizontalSegments.forEach(segment => nextActiveSegments.add(segment));
-              }
-              nextActiveSegments.add(lastSelectedDot); // Ensure start dot remains/gets active
-              nextActiveSegments.add(id); // Add the clicked (end) dot
-              nextLastSelectedDot = null; // Reset dot selection
-
-            } else if (diagonalSegments.length > 0) {
-              // Attempt diagonal connection ('d' segment)
-              const dSegmentId = diagonalSegments.find(s => s.startsWith('d-'));
-              let quadrantConflict = false;
-              let iConflict = false; // Track 'i' conflict
-
-              if (dSegmentId) {
-                const { row: dRow, col: dCol } = parseSegmentId(dSegmentId);
-
-                // Check quadrant conflict
-                const allQuadrants = [ `e-${dRow + 1}-${dCol + 1}`, `f-${dRow + 1}-${dCol}`, `g-${dRow}-${dCol + 1}`, `h-${dRow}-${dCol}` ];
-                const oppositeQuadrants = allQuadrants.filter(q => !diagonalSegments.includes(q));
-                // Use the current activeSegments state for the check
-                if (oppositeQuadrants.some(q => activeSegments.has(q))) {
-                  quadrantConflict = true;
-                }
-
-                // --- Check for conflicting 'i' segments ---
-                const iAboveId = `i-${dRow}-${col}`;
-                const iBelowId = `i-${dRow + 1}-${col}`;
-                // Use the current activeSegments state for the check
-                if (activeSegments.has(iAboveId) || activeSegments.has(iBelowId)) {
-                   iConflict = true;
-                   console.log(`Blocked d-${dRow}-${dCol} activation via connection due to active i: ${iAboveId} or ${iBelowId}`);
-                }
-                // --- End check ---
-              }
-
-              // --- Only add diagonal segments if no quadrant OR 'i' conflict ---
-              if (!quadrantConflict && !iConflict) {
-                diagonalSegments.forEach(segment => nextActiveSegments.add(segment));
-                // Set d-state if connection made
-                if (dSegmentId) {
-                  const isEH = diagonalSegments.some(s => s.startsWith('e-') || s.startsWith('h-'));
-                  dStateUpdate = { id: dSegmentId, state: isEH ? 2 : 1 };
-                }
-              }
-              // --- End Modification ---
-
-              // Always add the start and end dots themselves, even if connection conflicted
-              nextActiveSegments.add(lastSelectedDot);
-              nextActiveSegments.add(id);
-              nextLastSelectedDot = null; // Reset dot selection after any connection attempt
-            } else {
-               // No connection made - Toggle the second dot clicked and clear selection
-               if (nextActiveSegments.has(id)) {
-                 // If deselecting the second dot (no connection formed)
-                 const segmentsToDeactivate = handleCircleDeselection(id, activeSegments);
-                 nextActiveSegments.delete(id);
-                 segmentsToDeactivate.forEach(segmentId => {
-                     nextActiveSegments.delete(segmentId);
-                     if (segmentId.startsWith('d-')) {
-                       dStateUpdate = { id: segmentId, state: 0 }; // Ensure d-state is cleared
+                 if (horizontalSegments.length > 0) {
+                     // Attempt horizontal connection
+                     const iSegment = horizontalSegments.find(s => s.startsWith('i-'));
+                     let iConflict = false;
+                     if (iSegment) {
+                         const { row: iRow, col: iCol } = parseSegmentId(iSegment);
+                         const dAboveId = `d-${iRow - 1}-${iCol}`;
+                         const dBelowId = `d-${iRow}-${iCol}`;
+                         if (activeSegments.has(dAboveId) || activeSegments.has(dBelowId)) {
+                             iConflict = true;
+                             console.log(`Add Only Mode: Blocked i-${iRow}-${iCol} due to active d: ${dAboveId} or ${dBelowId}`);
+                         }
                      }
+                     if (!iConflict) {
+                         horizontalSegments.forEach(segment => nextActiveSegments.add(segment));
+                         nextActiveSegments.add(id); // Activate the new dot
+                         nextLastSelectedDot = id; // Continue chain from new dot
+                         connectionMade = true; // Mark connection success
+                     } else {
+                        // Conflict - do nothing, keep lastSelectedDot as is
+                     }
+                 } else if (diagonalSegments.length > 0) {
+                     // Attempt diagonal connection
+                     const dSegmentId = diagonalSegments.find(s => s.startsWith('d-'));
+                     let quadrantConflict = false;
+                     let iConflict = false;
+                     if (dSegmentId) {
+                         const { row: dRow, col: dCol } = parseSegmentId(dSegmentId);
+                         // Check quadrant conflict
+                         const allQuadrants = [ `e-${dRow + 1}-${dCol + 1}`, `f-${dRow + 1}-${dCol}`, `g-${dRow}-${dCol + 1}`, `h-${dRow}-${dCol}` ];
+                         const oppositeQuadrants = allQuadrants.filter(q => !diagonalSegments.includes(q));
+                         if (oppositeQuadrants.some(q => activeSegments.has(q))) {
+                             quadrantConflict = true;
+                         }
+                         // Check i conflict
+                         const iAboveId = `i-${dRow}-${dCol}`;
+                         const iBelowId = `i-${dRow + 1}-${dCol}`;
+                         if (activeSegments.has(iAboveId) || activeSegments.has(iBelowId)) {
+                             iConflict = true;
+                             console.log(`Add Only Mode: Blocked d-${dRow}-${dCol} due to active i: ${iAboveId} or ${iBelowId}`);
+                         }
+                     }
+                     if (!quadrantConflict && !iConflict) {
+                         diagonalSegments.forEach(segment => nextActiveSegments.add(segment));
+                         if (dSegmentId) {
+                             const isEH = diagonalSegments.some(s => s.startsWith('e-') || s.startsWith('h-'));
+                             dStateUpdate = { id: dSegmentId, state: isEH ? 2 : 1 };
+                         }
+                         nextActiveSegments.add(id); // Activate the new dot
+                         nextLastSelectedDot = id; // Continue chain from new dot
+                         connectionMade = true; // Mark connection success
+                     } else {
+                         // Conflict - do nothing, keep lastSelectedDot as is
+                     }
+                 } else {
+                     // Not adjacent - do nothing in Add Only mode
+                     console.log("Add Only Mode: Clicked dot not adjacent.");
+                 }
+             }
+
+             // --- NEW: Handle cases where no connection was made ---
+             if (!connectionMade) {
+                console.log("Add Only Mode: No valid connection. Activating dot and starting new chain.");
+                nextActiveSegments.add(id); // Activate the clicked dot anyway
+                nextLastSelectedDot = id; // Start new chain from this dot
+             }
+
+             // Apply state updates for Add Only mode
+             setActiveSegments(nextActiveSegments);
+             if (dStateUpdate) {
+                 setDSegmentClickState(prevMap => {
+                     const newMap = new Map(prevMap);
+                     // dStateUpdate cannot be null here
+                     if (dStateUpdate!.state === 0) { newMap.delete(dStateUpdate!.id); }
+                     else { newMap.set(dStateUpdate!.id, dStateUpdate!.state); }
+                     return newMap;
                  });
-               } else {
-                 nextActiveSegments.add(id); // Selecting the second dot
-               }
-               nextLastSelectedDot = null; // Clear selection as no connection formed
-            }
+             }
+             setLastSelectedDot(nextLastSelectedDot);
+             return; // Handled 'a' in Add Only mode
 
-            // Apply the calculated state updates
-            setActiveSegments(nextActiveSegments);
-            if (dStateUpdate) {
-              setDSegmentClickState(prevMap => {
-                const newMap = new Map(prevMap);
-                if (dStateUpdate.state === 0) {
-                    newMap.delete(dStateUpdate.id);
+         } else {
+             // --- Normal Mode 'a' click Logic ---
+             if (lastSelectedDot) {
+                // This is the second dot clicked in Normal Mode
+                const startPoint = parseSegmentId(lastSelectedDot);
+                const endPoint = { type, row, col };
+                let nextActiveSegments = new Set(activeSegments);
+                let dStateUpdate: { id: string; state: number } | null = null;
+                let nextLastSelectedDot: string | null = null; // Reset selection after action
+
+                const horizontalSegments = getHorizontalSegments(startPoint, endPoint);
+                const diagonalSegments = getDiagonalSegments(startPoint, endPoint);
+
+                if (horizontalSegments.length > 0) {
+                    // Attempt horizontal connection
+                    const iSegment = horizontalSegments.find(s => s.startsWith('i-'));
+                    let iConflict = false;
+                    if (iSegment) {
+                       const { row: iRow, col: iCol } = parseSegmentId(iSegment);
+                       const dAboveId = `d-${iRow - 1}-${iCol}`; const dBelowId = `d-${iRow}-${iCol}`;
+                       if (activeSegments.has(dAboveId) || activeSegments.has(dBelowId)) { iConflict = true; console.log(`Normal Mode: Blocked i-${iRow}-${iCol} activation via connection due to active d: ${dAboveId} or ${dBelowId}`);}
+                    }
+                    if (!iConflict) { horizontalSegments.forEach(segment => nextActiveSegments.add(segment)); }
+                    nextActiveSegments.add(lastSelectedDot); nextActiveSegments.add(id); nextLastSelectedDot = null;
+                } else if (diagonalSegments.length > 0) {
+                    // Attempt diagonal connection
+                    const dSegmentId = diagonalSegments.find(s => s.startsWith('d-'));
+                    let quadrantConflict = false; let iConflict = false;
+                    if (dSegmentId) {
+                       const { row: dRow, col: dCol } = parseSegmentId(dSegmentId);
+                       // Check quadrant conflict
+                       const allQuadrants = [ `e-${dRow + 1}-${dCol + 1}`, `f-${dRow + 1}-${dCol}`, `g-${dRow}-${dCol + 1}`, `h-${dRow}-${dCol}` ];
+                       const oppQuads = allQuadrants.filter(q => !diagonalSegments.includes(q));
+                       if (oppQuads.some(q => activeSegments.has(q))) { quadrantConflict = true; }
+                       // Check i conflict
+                       const iAboveId = `i-${dRow}-${dCol}`; const iBelowId = `i-${dRow + 1}-${dCol}`;
+                       if (activeSegments.has(iAboveId) || activeSegments.has(iBelowId)) { iConflict = true; console.log(`Normal Mode: Blocked d-${dRow}-${dCol} activation via connection due to active i: ${iAboveId} or ${iBelowId}`); }
+                    }
+                    if (!quadrantConflict && !iConflict) {
+                       diagonalSegments.forEach(segment => nextActiveSegments.add(segment));
+                       if (dSegmentId) { const isEH = diagonalSegments.some(s => s.startsWith('e-') || s.startsWith('h-')); dStateUpdate = { id: dSegmentId, state: isEH ? 2 : 1 }; }
+                    }
+                    nextActiveSegments.add(lastSelectedDot); nextActiveSegments.add(id); nextLastSelectedDot = null;
                 } else {
-                    newMap.set(dStateUpdate.id, dStateUpdate.state);
+                   // No connection: Toggle second dot, clear selection
+                   if (nextActiveSegments.has(id)) { // Deselecting second dot
+                       const segmentsToDeactivate = handleCircleDeselection(id, activeSegments);
+                       nextActiveSegments.delete(id);
+                       segmentsToDeactivate.forEach(segmentId => {
+                           nextActiveSegments.delete(segmentId);
+                           if (segmentId.startsWith('d-')) { dStateUpdate = { id: segmentId, state: 0 }; }
+                       });
+                   } else { // Selecting second dot
+                       nextActiveSegments.add(id);
+                   }
+                   nextLastSelectedDot = null;
                 }
-                return newMap;
-              });
-            }
-            setLastSelectedDot(nextLastSelectedDot);
-
-          } else {
-            // No lastSelectedDot: This is the first dot clicked OR a deselection when no other dot was selected
-            let nextActiveSegments = new Set(activeSegments);
-            let nextLastSelectedDot: string | null = null;
-
-            if (nextActiveSegments.has(id)) {
-              // Deselecting the dot
-              const segmentsToDeactivate = handleCircleDeselection(id, activeSegments); // Pass current activeSegments
-              nextActiveSegments.delete(id);
-              nextLastSelectedDot = null;
-              segmentsToDeactivate.forEach(segmentId => {
-                nextActiveSegments.delete(segmentId);
-                // If it's a diamond segment, also clear its click state
-                if (segmentId.startsWith('d-')) {
-                  setDSegmentClickState(prevMap => {
-                    const newMap = new Map(prevMap);
-                    newMap.delete(segmentId);
-                    return newMap;
-                  });
+                // Apply state updates for Normal Mode second click
+                setActiveSegments(nextActiveSegments);
+                if (dStateUpdate) {
+                    setDSegmentClickState(prevMap => {
+                        const newMap = new Map(prevMap);
+                        // Linter might complain, but this check ensures dStateUpdate is not null here
+                        if (dStateUpdate!.state === 0) { newMap.delete(dStateUpdate!.id); }
+                        else { newMap.set(dStateUpdate!.id, dStateUpdate!.state); }
+                        return newMap;
+                    });
                 }
-              });
+                setLastSelectedDot(nextLastSelectedDot);
 
-            } else {
-              // Selecting the dot (first of a potential pair)
-              nextActiveSegments.add(id);
-              nextLastSelectedDot = id;
-            }
-
-            // Apply state updates for this case
-            setActiveSegments(nextActiveSegments);
-            setLastSelectedDot(nextLastSelectedDot); // Will be null if deselected, or id if selected
-          }
-         return; // Stop processing after handling 'a'
+             } else {
+                 // Normal mode: First dot click OR deselection
+                 let nextActiveSegments = new Set(activeSegments); let nextLastSelectedDot: string | null = null;
+                 if (nextActiveSegments.has(id)) { // Deselecting
+                    const segmentsToDeactivate = handleCircleDeselection(id, activeSegments);
+                    nextActiveSegments.delete(id); nextLastSelectedDot = null;
+                    segmentsToDeactivate.forEach(segmentId => {
+                       nextActiveSegments.delete(segmentId);
+                       if (segmentId.startsWith('d-')) {
+                          setDSegmentClickState(prevMap => { const map = new Map(prevMap); map.delete(segmentId); return map; });
+                       }
+                    });
+                 } else { // Selecting
+                    nextActiveSegments.add(id); nextLastSelectedDot = id;
+                 }
+                 setActiveSegments(nextActiveSegments);
+                 setLastSelectedDot(nextLastSelectedDot);
+             }
+             return; // Handled 'a' in Normal mode
+         }
       }
 
       // --- Handle 'c' clicks (which toggle 'i' segments) ---
@@ -801,7 +845,12 @@ const SegmentedDisplay10x10: React.FC = () => {
   }, [centers, outerRadius, innerRadius, activeSegments, showLabels, useColors, showOutlines]);
   
   // Clear all segments
-  const clearAllSegments = () => setActiveSegments(new Set());
+  const clearAllSegments = () => {
+    setActiveSegments(new Set());
+    setDSegmentClickState(new Map()); // Clear diamond states too
+    setLastSelectedDot(null);
+    setIsAddOnlyMode(false); // Turn off Add Only mode
+  };
   
   // Activate all segments
   const activateAllSegments = () => {
@@ -835,6 +884,9 @@ const SegmentedDisplay10x10: React.FC = () => {
     }
     
     setActiveSegments(allSegments);
+    setDSegmentClickState(new Map()); // Clear diamond states
+    setLastSelectedDot(null);
+    setIsAddOnlyMode(false); // Turn off Add Only mode
   };
   
   // Toggle display settings
@@ -874,6 +926,23 @@ const SegmentedDisplay10x10: React.FC = () => {
             onClick={() => setShowOutlines(prev => !prev)}
           >
             {showOutlines ? 'On' : 'Off'}
+          </button>
+        </div>
+
+        {/* Add Only Mode Toggle */}
+        <div className="flex items-center gap-2">
+          <label className="font-medium">Add Only Mode:</label>
+          <button
+            className={`px-3 py-1 rounded ${isAddOnlyMode ? 'bg-green-500 text-white' : 'bg-gray-200'}`}
+            onClick={() => {
+              setIsAddOnlyMode(prev => !prev);
+              // Clear last selected dot when turning mode off
+              if (isAddOnlyMode) { // check the *current* state before toggle
+                setLastSelectedDot(null);
+              }
+            }}
+          >
+            {isAddOnlyMode ? 'On' : 'Off'}
           </button>
         </div>
       </div>
