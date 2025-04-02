@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import type { JSX } from 'react';
-import { getDiagonalSegments, getHorizontalSegments, parseSegmentId, isInnerCircle, handleCircleDeselection } from './behaviors';
+import { getDiagonalSegments, getHorizontalSegments, parseSegmentId, isInnerCircle } from './behaviors';
 
 interface Point {
   x: number;
@@ -26,7 +26,18 @@ interface AdjacencyList {
   }[];
 }
 
-const SegmentedDisplay10x10: React.FC = () => {
+// Define props for the component
+interface SegmentedDisplayGridProps {
+  rows?: number;
+  cols?: number;
+}
+
+// Define base values for proportions
+const BASE_OUTER_RADIUS = 47;
+const BASE_INNER_RADIUS = 32;
+const BASE_SPACING_FACTOR = 1.70;
+
+const SegmentedDisplayGrid: React.FC<SegmentedDisplayGridProps> = ({ rows = 20, cols = 40 }) => {
   // Configuration state - using smaller default values for the 10x10 grid
   const [outerRadius, setOuterRadius] = useState(47); // Original radius
   const [innerRadius, setInnerRadius] = useState(32); // Original inner radius
@@ -66,9 +77,61 @@ const SegmentedDisplay10x10: React.FC = () => {
     i: "#2c3e50"  // Horizontal connector - dark blue/grey
   };
   
-  // Reuse all the helper functions from the original component
+  // State for global scaling
+  const [scale, setScale] = useState(1.0);
+  
+  // Calculate effective values based on scale
+  const effectiveOuterRadius = BASE_OUTER_RADIUS * scale;
+  const effectiveInnerRadius = BASE_INNER_RADIUS * scale;
+  const effectiveSpacing = effectiveOuterRadius * BASE_SPACING_FACTOR; // Spacing relative to scaled outer radius
+  
+  // Helper functions, now including handleCircleDeselection
   const segmentHelpers = {
-    // ... existing helper functions ...
+    handleCircleDeselection: (dotId: string, currentActiveSegments: Set<string>): string[] => {
+      const { row: dotRow, col: dotCol } = parseSegmentId(dotId);
+      const segmentsToDeactivate = new Set<string>();
+
+      // Define the 4 potential diagonal connections *originating* from this dot.
+      const potentialConnections = [
+        // Top-Right connection via e-dotRow-dotCol
+        { attachedQuadrant: `e-${dotRow}-${dotCol}`, diamond: `d-${dotRow - 1}-${dotCol - 1}`, oppositeQuadrant: `h-${dotRow - 1}-${dotCol - 1}` },
+        // Top-Left connection via f-dotRow-dotCol
+        { attachedQuadrant: `f-${dotRow}-${dotCol}`, diamond: `d-${dotRow - 1}-${dotCol}`,   oppositeQuadrant: `g-${dotRow - 1}-${dotCol + 1}` },
+        // Bottom-Left connection via g-dotRow-dotCol
+        { attachedQuadrant: `g-${dotRow}-${dotCol}`, diamond: `d-${dotRow}-${dotCol - 1}`,   oppositeQuadrant: `f-${dotRow + 1}-${dotCol - 1}` },
+        // Bottom-Right connection via h-dotRow-dotCol
+        { attachedQuadrant: `h-${dotRow}-${dotCol}`, diamond: `d-${dotRow}-${dotCol}`,     oppositeQuadrant: `e-${dotRow + 1}-${dotCol + 1}` },
+      ];
+
+      for (const conn of potentialConnections) {
+        try {
+          const { row: dRow, col: dCol } = parseSegmentId(conn.diamond);
+          // Use numRows and numCols for bounds checking
+          if (dRow < 0 || dRow >= rows - 1 || dCol < 0 || dCol >= cols - 1) continue;
+        } catch (e) { continue; } // Skip if diamond ID is invalid format
+
+        if (currentActiveSegments.has(conn.attachedQuadrant)) {
+          segmentsToDeactivate.add(conn.attachedQuadrant);
+          segmentsToDeactivate.add(conn.diamond);
+          try {
+            const { row: oqRow, col: oqCol } = parseSegmentId(conn.oppositeQuadrant);
+            // Use numRows and numCols for bounds checking
+            if (oqRow >= 0 && oqRow < rows && oqCol >= 0 && oqCol < cols) {
+              segmentsToDeactivate.add(conn.oppositeQuadrant);
+            }
+          } catch (e) { /* Ignore if opposite quadrant ID is invalid */ }
+        }
+      }
+
+      // Horizontal connectors
+      const leftI = `i-${dotRow}-${dotCol - 1}`; // Connector to the left
+      const rightI = `i-${dotRow}-${dotCol}`;    // Connector to the right
+      if (dotCol > 0 && currentActiveSegments.has(leftI)) { segmentsToDeactivate.add(leftI); }
+      if (dotCol < cols - 1 && currentActiveSegments.has(rightI)) { segmentsToDeactivate.add(rightI); }
+
+      return Array.from(segmentsToDeactivate);
+    },
+
     toggleSegment: (id: string) => {
       // --- Handle 'd' segments FIRST ---
       if (id.startsWith('d-')) {
@@ -205,16 +268,12 @@ const SegmentedDisplay10x10: React.FC = () => {
                          // Conflict - do nothing, keep lastSelectedDot as is
                      }
                  } else {
-                     // Not adjacent - do nothing in Add Only mode
-                     console.log("Add Only Mode: Clicked dot not adjacent.");
+                     // Not adjacent: Activate dot, start new chain
+                     console.log("Add Only Mode: Clicked dot not adjacent. Activating dot and starting new chain.");
+                     nextActiveSegments.add(id); // Activate the clicked dot anyway
+                     nextLastSelectedDot = id; // Start new chain from this dot
+                     connectionMade = true; // Mark as handled (even if just activating)
                  }
-             }
-
-             // --- NEW: Handle cases where no connection was made ---
-             if (!connectionMade) {
-                console.log("Add Only Mode: No valid connection. Activating dot and starting new chain.");
-                nextActiveSegments.add(id); // Activate the clicked dot anyway
-                nextLastSelectedDot = id; // Start new chain from this dot
              }
 
              // Apply state updates for Add Only mode
@@ -263,8 +322,8 @@ const SegmentedDisplay10x10: React.FC = () => {
                        const { row: dRow, col: dCol } = parseSegmentId(dSegmentId);
                        // Check quadrant conflict
                        const allQuadrants = [ `e-${dRow + 1}-${dCol + 1}`, `f-${dRow + 1}-${dCol}`, `g-${dRow}-${dCol + 1}`, `h-${dRow}-${dCol}` ];
-                       const oppQuads = allQuadrants.filter(q => !diagonalSegments.includes(q));
-                       if (oppQuads.some(q => activeSegments.has(q))) { quadrantConflict = true; }
+                       const oppositeQuadrants = allQuadrants.filter(q => !diagonalSegments.includes(q));
+                       if (oppositeQuadrants.some(q => activeSegments.has(q))) { quadrantConflict = true; }
                        // Check i conflict
                        const iAboveId = `i-${dRow}-${dCol}`; const iBelowId = `i-${dRow + 1}-${dCol}`;
                        if (activeSegments.has(iAboveId) || activeSegments.has(iBelowId)) { iConflict = true; console.log(`Normal Mode: Blocked d-${dRow}-${dCol} activation via connection due to active i: ${iAboveId} or ${iBelowId}`); }
@@ -277,7 +336,7 @@ const SegmentedDisplay10x10: React.FC = () => {
                 } else {
                    // No connection: Toggle second dot, clear selection
                    if (nextActiveSegments.has(id)) { // Deselecting second dot
-                       const segmentsToDeactivate = handleCircleDeselection(id, activeSegments);
+                       const segmentsToDeactivate = segmentHelpers.handleCircleDeselection(id, activeSegments);
                        nextActiveSegments.delete(id);
                        segmentsToDeactivate.forEach(segmentId => {
                            nextActiveSegments.delete(segmentId);
@@ -305,7 +364,7 @@ const SegmentedDisplay10x10: React.FC = () => {
                  // Normal mode: First dot click OR deselection
                  let nextActiveSegments = new Set(activeSegments); let nextLastSelectedDot: string | null = null;
                  if (nextActiveSegments.has(id)) { // Deselecting
-                    const segmentsToDeactivate = handleCircleDeselection(id, activeSegments);
+                    const segmentsToDeactivate = segmentHelpers.handleCircleDeselection(id, activeSegments);
                     nextActiveSegments.delete(id); nextLastSelectedDot = null;
                     segmentsToDeactivate.forEach(segmentId => {
                        nextActiveSegments.delete(segmentId);
@@ -377,7 +436,7 @@ const SegmentedDisplay10x10: React.FC = () => {
             if (associatedDId) {
                try {
                  const dParts = parseSegmentId(associatedDId);
-                 if (dParts.row >= 0 && dParts.row < 9 && dParts.col >= 0 && dParts.col < 9) {
+                 if (dParts.row >= 0 && dParts.row < rows - 1 && dParts.col >= 0 && dParts.col < cols - 1) {
                    const eQ = `e-${dParts.row + 1}-${dParts.col + 1}`, fQ = `f-${dParts.row + 1}-${dParts.col}`;
                    const gQ = `g-${dParts.row}-${dParts.col + 1}`, hQ = `h-${dParts.row}-${dParts.col}`;
                    if ((type === 'e' || type === 'h') && (prev.has(fQ) || prev.has(gQ))) { blockClick = true; }
@@ -430,15 +489,16 @@ const SegmentedDisplay10x10: React.FC = () => {
       return COLORS[type] || "gray"; // Fallback color
     },
     
-    calculateIntersectionPoints: (x1: number, y1: number, x2: number, y2: number, radius: number): IntersectionPoints | null => {
+    calculateIntersectionPoints: (x1: number, y1: number, x2: number, y2: number, currentOuterRadius: number): IntersectionPoints | null => {
       const dx = x2 - x1;
       const dy = y2 - y1;
       const distance = Math.sqrt(dx * dx + dy * dy);
       
-      if (distance >= 2 * radius || distance < 0.001) return null;
+      if (distance >= 2 * currentOuterRadius || distance < 0.001) return null;
       
-      const a = (radius * radius - radius * radius + distance * distance) / (2 * distance);
-      const h = Math.sqrt(radius * radius - a * a);
+      const a = (currentOuterRadius * currentOuterRadius - currentOuterRadius * currentOuterRadius + distance * distance) / (2 * distance);
+      const hSquared = currentOuterRadius * currentOuterRadius - a * a;
+      const h = hSquared > 0 ? Math.sqrt(hSquared) : 0;
       
       const x3 = x1 + (a * dx) / distance;
       const y3 = y1 + (a * dy) / distance;
@@ -455,20 +515,20 @@ const SegmentedDisplay10x10: React.FC = () => {
       };
     },
     
-    calculateLensPath: (x1: number, y1: number, x2: number, y2: number, radius: number): string => {
-      const intersections = segmentHelpers.calculateIntersectionPoints(x1, y1, x2, y2, radius);
+    calculateLensPath: (x1: number, y1: number, x2: number, y2: number, currentOuterRadius: number): string => {
+      const intersections = segmentHelpers.calculateIntersectionPoints(x1, y1, x2, y2, currentOuterRadius);
       if (!intersections) return "";
       
       const { p1, p2 } = intersections;
       
       return `
         M ${p1.x} ${p1.y}
-        A ${radius} ${radius} 0 0 1 ${p2.x} ${p2.y}
-        A ${radius} ${radius} 0 0 1 ${p1.x} ${p1.y}
+        A ${currentOuterRadius} ${currentOuterRadius} 0 0 1 ${p2.x} ${p2.y}
+        A ${currentOuterRadius} ${currentOuterRadius} 0 0 1 ${p1.x} ${p1.y}
       `;
     },
     
-    calculateQuadrant: (center: Point, outerR: number, innerR: number, quadrant: string): string => {
+    calculateQuadrant: (center: Point, currentOuterR: number, currentInnerR: number, quadrant: string): string => {
       const angles: Record<string, { start: number; end: number }> = {
         e: { start: -Math.PI, end: -Math.PI/2 },     // Top-left
         f: { start: -Math.PI/2, end: 0 },            // Top-right
@@ -478,26 +538,26 @@ const SegmentedDisplay10x10: React.FC = () => {
       
       const { start: startAngle, end: endAngle } = angles[quadrant];
       
-      const outerStartX = center.x + outerR * Math.cos(startAngle);
-      const outerStartY = center.y + outerR * Math.sin(startAngle);
-      const outerEndX = center.x + outerR * Math.cos(endAngle);
-      const outerEndY = center.y + outerR * Math.sin(endAngle);
+      const outerStartX = center.x + currentOuterR * Math.cos(startAngle);
+      const outerStartY = center.y + currentOuterR * Math.sin(startAngle);
+      const outerEndX = center.x + currentOuterR * Math.cos(endAngle);
+      const outerEndY = center.y + currentOuterR * Math.sin(endAngle);
       
-      const innerStartX = center.x + innerR * Math.cos(startAngle);
-      const innerStartY = center.y + innerR * Math.sin(startAngle);
-      const innerEndX = center.x + innerR * Math.cos(endAngle);
-      const innerEndY = center.y + innerR * Math.sin(endAngle);
+      const innerStartX = center.x + currentInnerR * Math.cos(startAngle);
+      const innerStartY = center.y + currentInnerR * Math.sin(startAngle);
+      const innerEndX = center.x + currentInnerR * Math.cos(endAngle);
+      const innerEndY = center.y + currentInnerR * Math.sin(endAngle);
       
       return `
         M ${outerStartX} ${outerStartY}
-        A ${outerR} ${outerR} 0 0 1 ${outerEndX} ${outerEndY}
+        A ${currentOuterR} ${currentOuterR} 0 0 1 ${outerEndX} ${outerEndY}
         L ${innerEndX} ${innerEndY}
-        A ${innerR} ${innerR} 0 0 0 ${innerStartX} ${innerStartY}
+        A ${currentInnerR} ${currentInnerR} 0 0 0 ${innerStartX} ${innerStartY}
         Z
       `;
     },
     
-    calculateDiamond: (centers: Point[], outerRadius: number): string => {
+    calculateDiamond: (centers: Point[], currentOuterRadius: number): string => {
       if (centers.length !== 4) return "";
       
       const intersections: Record<string, { corner: Point }> = {};
@@ -511,7 +571,7 @@ const SegmentedDisplay10x10: React.FC = () => {
       
       for (const pair of pairs) {
         const points = segmentHelpers.calculateIntersectionPoints(
-          pair.c1.x, pair.c1.y, pair.c2.x, pair.c2.y, outerRadius
+          pair.c1.x, pair.c1.y, pair.c2.x, pair.c2.y, currentOuterRadius
         );
         
         if (!points) return "";
@@ -549,15 +609,15 @@ const SegmentedDisplay10x10: React.FC = () => {
     }
   };
   
-  // Grid centers calculated once per render - modified for 10x10
+  // Generate grid centers calculated once per render - modified for dynamic grid size
   const centers = useMemo(() => {
     const result: Point[] = [];
     
-    for (let row = 0; row < 10; row++) {
-      for (let col = 0; col < 10; col++) {
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
         result.push({
-          x: margin + col * spacing + outerRadius,
-          y: margin + row * spacing + outerRadius,
+          x: margin + col * effectiveSpacing + effectiveOuterRadius,
+          y: margin + row * effectiveSpacing + effectiveOuterRadius,
           row,
           col
         });
@@ -565,18 +625,18 @@ const SegmentedDisplay10x10: React.FC = () => {
     }
     
     return result;
-  }, [margin, spacing, outerRadius]);
+  }, [margin, effectiveSpacing, effectiveOuterRadius, rows, cols]);
   
-  // SVG dimensions - adjusted for 10x10 grid
-  const svgWidth = margin * 2 + spacing * 9 + outerRadius * 2;
-  const svgHeight = margin * 2 + spacing * 9 + outerRadius * 2;
+  // SVG dimensions - adjusted for dynamic grid size
+  const svgWidth = margin * 2 + effectiveSpacing * (cols > 1 ? cols - 1 : 0) + effectiveOuterRadius * 2;
+  const svgHeight = margin * 2 + effectiveSpacing * (rows > 1 ? rows - 1 : 0) + effectiveOuterRadius * 2;
   
   // Function to generate the SVG path for horizontal connector
   const getHorizontalConnectorPath = (center: Point): string => {
     const x1 = center.x;
-    const x2 = center.x + spacing;
+    const x2 = center.x + effectiveSpacing;
     const y = center.y;
-    const height = innerRadius * 2; // Make the connector the same height as the inner circle diameter
+    const height = effectiveInnerRadius * 2; // Use effective inner radius
     
     return `
       M ${x1} ${y - height/2}
@@ -598,7 +658,7 @@ const SegmentedDisplay10x10: React.FC = () => {
           key={`ref-outer-${center.row}-${center.col}`}
           cx={center.x}
           cy={center.y}
-          r={outerRadius}
+          r={effectiveOuterRadius}
           fill="none"
           stroke={showOutlines ? "gray" : "none"}
           strokeWidth="1"
@@ -612,7 +672,7 @@ const SegmentedDisplay10x10: React.FC = () => {
           key={`ref-inner-${center.row}-${center.col}`}
           cx={center.x}
           cy={center.y}
-          r={innerRadius}
+          r={effectiveInnerRadius}
           fill="none"
           stroke={showOutlines ? "gray" : "none"}
           strokeWidth="1"
@@ -622,18 +682,18 @@ const SegmentedDisplay10x10: React.FC = () => {
       );
     });
     
-    // Draw diamonds between every 2x2 group
-    for (let row = 0; row < 9; row++) {
-      for (let col = 0; col < 9; col++) {
+    // Draw diamonds between every 2x2 group - use numRows-1, numCols-1
+    for (let row = 0; row < rows - 1; row++) {
+      for (let col = 0; col < cols - 1; col++) {
         const diamondCenters = [
-          centers[row * 10 + col],
-          centers[row * 10 + col + 1],
-          centers[(row + 1) * 10 + col],
-          centers[(row + 1) * 10 + col + 1]
+          centers[row * cols + col],          // Top-left
+          centers[row * cols + col + 1],      // Top-right
+          centers[(row + 1) * cols + col],      // Bottom-left
+          centers[(row + 1) * cols + col + 1]   // Bottom-right
         ];
         
         const diamondId = `d-${row}-${col}`;
-        const diamondPath = segmentHelpers.calculateDiamond(diamondCenters, outerRadius);
+        const diamondPath = segmentHelpers.calculateDiamond(diamondCenters, effectiveOuterRadius);
         
         if (diamondPath) {
           elements.push(
@@ -651,11 +711,11 @@ const SegmentedDisplay10x10: React.FC = () => {
       }
     }
     
-    // Draw quadrants for each circle
+    // Draw quadrants for each circle (already iterates through all centers)
     centers.forEach((center) => {
       ['e', 'f', 'h', 'g'].forEach(quadrant => {
         const id = `${quadrant}-${center.row}-${center.col}`;
-        const path = segmentHelpers.calculateQuadrant(center, outerRadius, innerRadius, quadrant);
+        const path = segmentHelpers.calculateQuadrant(center, effectiveOuterRadius, effectiveInnerRadius, quadrant);
         
         elements.push(
           <path
@@ -669,12 +729,13 @@ const SegmentedDisplay10x10: React.FC = () => {
       });
     });
     
-    // Draw horizontal lenses
+    // Draw horizontal lenses - use numCols-1
     centers.forEach((center) => {
-      if (typeof center.col === 'number' && center.col < 9) {
-        const rightCenter = centers.find(c => c.row === center.row && c.col === center.col! + 1);
+      if (typeof center.col === 'number' && center.col < cols - 1) {
+        const rightCenterIndex = center.row! * cols + center.col + 1;
+        const rightCenter = centers[rightCenterIndex];
         const id = `c-${center.row}-${center.col}`;
-        const path = segmentHelpers.calculateLensPath(center.x, center.y, rightCenter!.x, rightCenter!.y, outerRadius);
+        const path = segmentHelpers.calculateLensPath(center.x, center.y, rightCenter!.x, rightCenter!.y, effectiveOuterRadius);
         
         elements.push(
           <path
@@ -690,12 +751,13 @@ const SegmentedDisplay10x10: React.FC = () => {
       }
     });
     
-    // Draw vertical lenses
+    // Draw vertical lenses - use numRows-1
     centers.forEach((center) => {
-      if (center.row! < 9) {
-        const belowCenter = centers.find(c => c.row === center.row! + 1 && c.col === center.col);
+      if (typeof center.row === 'number' && center.row < rows - 1) {
+        const belowCenterIndex = (center.row + 1) * cols + center.col!;
+        const belowCenter = centers[belowCenterIndex];
         const id = `b-${center.row}-${center.col}`;
-        const path = segmentHelpers.calculateLensPath(center.x, center.y, belowCenter!.x, belowCenter!.y, outerRadius);
+        const path = segmentHelpers.calculateLensPath(center.x, center.y, belowCenter!.x, belowCenter!.y, effectiveOuterRadius);
         
         elements.push(
           <path
@@ -711,7 +773,7 @@ const SegmentedDisplay10x10: React.FC = () => {
       }
     });
     
-    // Draw inner circles ('a' segments) OR inactive dots
+    // Draw inner circles ('a' segments) OR inactive dots (already iterates through all centers)
     centers.forEach((center) => {
       const id = `a-${center.row}-${center.col}`;
       const isActive = activeSegments.has(id);
@@ -720,7 +782,7 @@ const SegmentedDisplay10x10: React.FC = () => {
         // Render the normal ACTIVE circle
         elements.push(
           <circle
-            key={id} cx={center.x} cy={center.y} r={innerRadius}
+            key={id} cx={center.x} cy={center.y} r={effectiveInnerRadius}
             fill={segmentHelpers.getFill(id)} stroke={showOutlines ? "black" : "none"} strokeWidth="1"
             onClick={() => segmentHelpers.toggleSegment(id)} className="cursor-pointer hover:opacity-80"
           />
@@ -738,7 +800,7 @@ const SegmentedDisplay10x10: React.FC = () => {
           // Render larger TRANSPARENT click target
           elements.push(
              <circle
-               key={id + '-inactive-dot-target'} cx={center.x} cy={center.y} r={innerRadius * 0.8} // Larger radius (e.g., 80% of inner)
+               key={id + '-inactive-dot-target'} cx={center.x} cy={center.y} r={effectiveInnerRadius * 0.8} // Use effective radius
                fill="transparent" // Invisible
                onClick={() => segmentHelpers.toggleSegment(id)} // Attach click handler here
                className="cursor-pointer" // Show pointer cursor on hover
@@ -748,7 +810,7 @@ const SegmentedDisplay10x10: React.FC = () => {
           // Render the normal INACTIVE (white) circle
           elements.push(
             <circle
-              key={id} cx={center.x} cy={center.y} r={innerRadius}
+              key={id} cx={center.x} cy={center.y} r={effectiveInnerRadius}
               fill={segmentHelpers.getFill(id)} // Will be white
               stroke={showOutlines ? "black" : "none"} strokeWidth="1"
               onClick={() => segmentHelpers.toggleSegment(id)} className="cursor-pointer hover:opacity-80"
@@ -758,9 +820,9 @@ const SegmentedDisplay10x10: React.FC = () => {
       }
     });
     
-    // Draw horizontal connectors ('i' segments) - only if active
+    // Draw horizontal connectors ('i' segments) - only if active - use numCols-1
     centers.forEach((center) => {
-      if (typeof center.col === 'number' && center.col < 9) {
+      if (typeof center.col === 'number' && center.col < cols - 1) {
         const id = `i-${center.row}-${center.col}`;
         if (activeSegments.has(id)) {
           const parentId = `c-${center.row}-${center.col}`; // Get the parent c segment ID
@@ -782,12 +844,14 @@ const SegmentedDisplay10x10: React.FC = () => {
     // Add labels if enabled
     if (showLabels) {
       // Add labels for diamonds
-      for (let row = 0; row < 9; row++) {
-        for (let col = 0; col < 9; col++) {
-          const centerX = (centers[row * 10 + col].x + centers[row * 10 + col + 1].x +
-                          centers[(row + 1) * 10 + col].x + centers[(row + 1) * 10 + col + 1].x) / 4;
-          const centerY = (centers[row * 10 + col].y + centers[row * 10 + col + 1].y +
-                          centers[(row + 1) * 10 + col].y + centers[(row + 1) * 10 + col + 1].y) / 4;
+      for (let row = 0; row < rows - 1; row++) {
+        for (let col = 0; col < cols - 1; col++) {
+          const tl = centers[row * cols + col];
+          const tr = centers[row * cols + col + 1];
+          const bl = centers[(row + 1) * cols + col];
+          const br = centers[(row + 1) * cols + col + 1];
+          const centerX = (tl.x + tr.x + bl.x + br.x) / 4;
+          const centerY = (tl.y + tr.y + bl.y + br.y) / 4;
           
           elements.push(
             <text
@@ -823,7 +887,7 @@ const SegmentedDisplay10x10: React.FC = () => {
         );
         
         // Quadrant labels
-        const midRadius = (outerRadius + innerRadius) / 2;
+        const midRadius = (effectiveOuterRadius + effectiveInnerRadius) / 2;
         const labelPositions = {
           e: { x: center.x - midRadius * 0.7, y: center.y - midRadius * 0.7 },
           f: { x: center.x + midRadius * 0.7, y: center.y - midRadius * 0.7 },
@@ -848,8 +912,9 @@ const SegmentedDisplay10x10: React.FC = () => {
         });
         
         // Horizontal lens labels
-        if (typeof center.col === 'number' && center.col < 9) {
-          const rightCenter = centers.find(c => c.row === center.row && c.col === center.col! + 1);
+        if (typeof center.col === 'number' && center.col < cols - 1) {
+          const rightCenterIndex = center.row! * cols + center.col + 1;
+          const rightCenter = centers[rightCenterIndex];
           elements.push(
             <text
               key={`label-c-${center.row}-${center.col}`}
@@ -866,8 +931,9 @@ const SegmentedDisplay10x10: React.FC = () => {
         }
         
         // Vertical lens labels
-        if (center.row! < 9) {
-          const belowCenter = centers.find(c => c.row === center.row! + 1 && c.col === center.col);
+        if (typeof center.row === 'number' && center.row < rows - 1) {
+          const belowCenterIndex = (center.row + 1) * cols + center.col!;
+          const belowCenter = centers[belowCenterIndex];
           elements.push(
             <text
               key={`label-b-${center.row}-${center.col}`}
@@ -886,7 +952,7 @@ const SegmentedDisplay10x10: React.FC = () => {
     }
     
     return elements;
-  }, [centers, outerRadius, innerRadius, activeSegments, showLabels, useColors, showOutlines, showInactiveDotGrid, dSegmentClickState, segmentHelpers]);
+  }, [centers, effectiveOuterRadius, effectiveInnerRadius, activeSegments, showLabels, useColors, showOutlines, showInactiveDotGrid, dSegmentClickState, segmentHelpers, rows, cols]);
   
   // Clear all segments
   const clearAllSegments = () => {
@@ -903,8 +969,8 @@ const SegmentedDisplay10x10: React.FC = () => {
     const allSegments = new Set<string>();
     
     // Add all possible segments
-    for (let row = 0; row < 10; row++) {
-      for (let col = 0; col < 10; col++) {
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
         // Inner circles and quadrants for all positions
         allSegments.add(`a-${row}-${col}`);
         allSegments.add(`e-${row}-${col}`);
@@ -913,17 +979,17 @@ const SegmentedDisplay10x10: React.FC = () => {
         allSegments.add(`h-${row}-${col}`);
         
         // Vertical lenses (except last row)
-        if (row < 9) {
+        if (row < rows - 1) {
           allSegments.add(`b-${row}-${col}`);
         }
         
         // Horizontal lenses (except last column)
-        if (col < 9) {
+        if (col < cols - 1) {
           allSegments.add(`c-${row}-${col}`);
         }
         
         // Diamonds (for valid positions)
-        if (row < 9 && col < 9) {
+        if (row < rows - 1 && col < cols - 1) {
           allSegments.add(`d-${row}-${col}`);
         }
       }
@@ -1071,7 +1137,7 @@ const SegmentedDisplay10x10: React.FC = () => {
   
   return (
     <div className="p-4">
-      <h1 className="text-xl font-bold mb-4">10x10 Segmented Display Grid</h1>
+      <h1 className="text-xl font-bold mb-4">{rows}x{cols} Segmented Display Grid</h1>
       
       {/* Display Settings */}
       <div className="mb-4 flex flex-wrap gap-4">
@@ -1202,88 +1268,28 @@ const SegmentedDisplay10x10: React.FC = () => {
         <h2 className="text-lg font-semibold mb-4">Adjust Parameters</h2>
         
         <div className="grid gap-4">
+          {/* New Scale Slider */}
           <div>
-            <label className="block mb-1">Outer Circle Radius: {outerRadius}px</label>
+            <label className="block mb-1">Scale: {scale.toFixed(2)}x</label>
             <div className="flex items-center gap-2">
-              <input 
-                type="range" 
-                min="20" 
-                max="60" 
-                value={outerRadius} 
-                onChange={(e) => {
-                  const newValue = parseInt(e.target.value);
-                  setOuterRadius(newValue);
-                  if (innerRadius >= newValue) {
-                    setInnerRadius(newValue - 5);
-                  }
-                }}
-                className="w-full"
-              />
-              <input 
-                type="number" 
-                min="20" 
-                max="60" 
-                value={outerRadius} 
-                onChange={(e) => {
-                  const newValue = parseInt(e.target.value) || 20;
-                  setOuterRadius(Math.min(60, Math.max(20, newValue)));
-                }}
-                className="w-16 p-1 border rounded"
-              />
-            </div>
-          </div>
-          
-          <div>
-            <label className="block mb-1">Inner Circle Radius: {innerRadius}px</label>
-            <div className="flex items-center gap-2">
-              <input 
-                type="range" 
-                min="15" 
-                max={outerRadius - 5} 
-                value={innerRadius} 
-                onChange={(e) => setInnerRadius(parseInt(e.target.value))}
-                className="w-full"
-              />
-              <input 
-                type="number" 
-                min="15" 
-                max={outerRadius - 5} 
-                value={innerRadius} 
-                onChange={(e) => {
-                  const newValue = parseInt(e.target.value) || 15;
-                  setInnerRadius(Math.min(outerRadius - 5, Math.max(15, newValue)));
-                }}
-                className="w-16 p-1 border rounded"
-              />
-            </div>
-          </div>
-          
-          <div>
-            <label className="block mb-1">
-              Spacing Factor: {spacingFactor.toFixed(2)} 
-              <span className="text-sm text-gray-500 ml-1">
-                (Spacing: {Math.round(spacing)}px)
-              </span>
-            </label>
-            <div className="flex items-center gap-2">
-              <input 
-                type="range" 
-                min="1.5" 
-                max="2.0" 
+              <input
+                type="range"
+                min="0.2"
+                max="2.0"
                 step="0.05"
-                value={spacingFactor} 
-                onChange={(e) => setSpacingFactor(parseFloat(e.target.value))}
+                value={scale}
+                onChange={(e) => setScale(parseFloat(e.target.value))}
                 className="w-full"
               />
-              <input 
-                type="number" 
-                min="1.5" 
-                max="2.0" 
+              <input
+                type="number"
+                min="0.2"
+                max="2.0"
                 step="0.05"
-                value={spacingFactor} 
+                value={scale}
                 onChange={(e) => {
-                  const newValue = parseFloat(e.target.value) || 1.5;
-                  setSpacingFactor(Math.min(2.0, Math.max(1.5, newValue)));
+                  const newValue = parseFloat(e.target.value) || 0.2;
+                  setScale(Math.min(2.0, Math.max(0.2, newValue)));
                 }}
                 className="w-16 p-1 border rounded"
               />
@@ -1292,21 +1298,26 @@ const SegmentedDisplay10x10: React.FC = () => {
           
           <div className="mt-2">
             <span className="block text-sm font-medium mb-2">
-              Thickness of outer ring: {outerRadius - innerRadius}px
+              Effective Outer Radius: {effectiveOuterRadius.toFixed(1)}px
+            </span>
+            <span className="block text-sm font-medium mb-2">
+              Effective Inner Radius: {effectiveInnerRadius.toFixed(1)}px
+            </span>
+            <span className="block text-sm font-medium mb-2">
+              Effective Spacing: {effectiveSpacing.toFixed(1)}px
+            </span>
+            <span className="block text-sm font-medium mb-2">
+              Effective Thickness: {(effectiveOuterRadius - effectiveInnerRadius).toFixed(1)}px
             </span>
           </div>
         </div>
         
         <div className="mt-4">
           <button
-            className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300"
-            onClick={() => {
-              setOuterRadius(47);
-              setInnerRadius(32);
-              setSpacingFactor(1.70);
-            }}
+            className="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400"
+            onClick={() => setScale(1.0)} // Reset scale to 1
           >
-            Reset to Default
+            Reset Scale
           </button>
         </div>
       </div>
@@ -1314,4 +1325,4 @@ const SegmentedDisplay10x10: React.FC = () => {
   );
 };
 
-export default SegmentedDisplay10x10; 
+export default SegmentedDisplayGrid; 
