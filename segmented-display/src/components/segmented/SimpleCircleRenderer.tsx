@@ -169,9 +169,7 @@ const SimpleCircleRenderer: React.FC = () => {
   const [spacingFactor, setSpacingFactor] = useState(INITIAL_BASE_SPACING_FACTOR);
   const [selectedSegments, setSelectedSegments] = useState<Set<SegmentKey>>(new Set());
   const [showLabels, setShowLabels] = useState(true); // New state for label visibility
-  const [showGrid, setShowGrid] = useState(true);
-  const [showDots, setShowDots] = useState(true);
-  const [showColors, setShowColors] = useState(true);
+  const [showOutlines, setShowOutlines] = useState(true); // <-- Add state for outlines
 
   // Define grid dimensions
   const gridRows = 2;
@@ -317,28 +315,9 @@ const SimpleCircleRenderer: React.FC = () => {
         ctx.fillStyle = '#FFFFFF';
         ctx.fill();
         ctx.strokeStyle = '#AAAAAA';
-        ctx.stroke();
-
-        // Draw grid lines if enabled
-        if (showGrid) {
-          ctx.beginPath();
-          ctx.strokeStyle = '#999999'; // Darker color for better visibility
-          ctx.lineWidth = 1; // Slightly thicker lines
-          // Vertical lines
-          ctx.moveTo(centerX, PADDING);
-          ctx.lineTo(centerX, PADDING + gridRows * effectiveCellHeight);
-          // Horizontal lines
-          ctx.moveTo(PADDING, centerY);
-          ctx.lineTo(PADDING + gridCols * effectiveCellWidth, centerY);
+        // Conditionally stroke
+        if (showOutlines) {
           ctx.stroke();
-        }
-
-        // Draw center dots if enabled
-        if (showDots) {
-          ctx.beginPath();
-          ctx.arc(centerX, centerY, 2, 0, Math.PI * 2);
-          ctx.fillStyle = '#000000';
-          ctx.fill();
         }
       }
     }
@@ -354,11 +333,13 @@ const SimpleCircleRenderer: React.FC = () => {
       const diamondPath = calculateDiamondPath(diamondCenters, effectiveOuterRadius);
       if (diamondPath) {
         const isSelected = selectedSegments.has('0,0,d');
-        ctx.fillStyle = showColors ? (isSelected ? COLORS.d : '#FFFFFF') : '#FFFFFF';
+        ctx.fillStyle = isSelected ? COLORS.d : '#FFFFFF';
         ctx.strokeStyle = isSelected ? '#000000' : '#AAAAAA';
-        ctx.lineWidth = isSelected ? 2 : 0.5;
         ctx.fill(diamondPath);
-        ctx.stroke(diamondPath);
+        // Conditionally stroke
+        if (showOutlines) {
+          ctx.stroke(diamondPath);
+        }
 
         // Draw label if enabled
         if (showLabels) {
@@ -388,13 +369,15 @@ const SimpleCircleRenderer: React.FC = () => {
           
           if (quadrantPath) {
             // Set fill and stroke styles
-            ctx.fillStyle = showColors ? (isSelected ? COLORS[quad] : '#FFFFFF') : '#FFFFFF';
+            ctx.fillStyle = isSelected ? COLORS[quad] : '#FFFFFF';
             ctx.strokeStyle = isSelected ? '#000000' : '#AAAAAA';
-            ctx.lineWidth = isSelected ? 2 : 0.5;
             
             // Draw the quadrant
             ctx.fill(quadrantPath);
-            ctx.stroke(quadrantPath);
+            // Conditionally stroke
+            if (showOutlines) {
+              ctx.stroke(quadrantPath);
+            }
             
             // Draw label if enabled
             if (showLabels) {
@@ -430,11 +413,13 @@ const SimpleCircleRenderer: React.FC = () => {
           const lensPath = calculateLensPath(centerX, centerY, rightCenterX, centerY, effectiveOuterRadius);
           if (lensPath) {
             const isSelected = selectedSegments.has(`${row},${col},c`);
-            ctx.fillStyle = showColors ? (isSelected ? COLORS.c : '#FFFFFF') : '#FFFFFF';
+            ctx.fillStyle = isSelected ? COLORS.c : '#FFFFFF';
             ctx.strokeStyle = isSelected ? '#000000' : '#AAAAAA';
-            ctx.lineWidth = isSelected ? 2 : 0.5;
             ctx.fill(lensPath);
-            ctx.stroke(lensPath);
+            // Conditionally stroke
+            if (showOutlines) {
+              ctx.stroke(lensPath);
+            }
 
             // Draw label if enabled
             if (showLabels) {
@@ -454,11 +439,13 @@ const SimpleCircleRenderer: React.FC = () => {
           const lensPath = calculateLensPath(centerX, centerY, centerX, belowCenterY, effectiveOuterRadius);
           if (lensPath) {
             const isSelected = selectedSegments.has(`${row},${col},b`);
-            ctx.fillStyle = showColors ? (isSelected ? COLORS.b : '#FFFFFF') : '#FFFFFF';
+            ctx.fillStyle = isSelected ? COLORS.b : '#FFFFFF';
             ctx.strokeStyle = isSelected ? '#000000' : '#AAAAAA';
-            ctx.lineWidth = isSelected ? 2 : 0.5;
             ctx.fill(lensPath);
-            ctx.stroke(lensPath);
+            // Conditionally stroke
+            if (showOutlines) {
+              ctx.stroke(lensPath);
+            }
 
             // Draw label if enabled
             if (showLabels) {
@@ -486,21 +473,24 @@ const SimpleCircleRenderer: React.FC = () => {
           const connectorPath = getHorizontalConnectorPath(connectorCenterX, centerY, effectiveCellWidth, effectiveInnerRadius);
           
           if (isSelected) {
-            ctx.fillStyle = showColors ? COLORS.i : '#FFFFFF';
+            ctx.fillStyle = COLORS.i;
             ctx.fill(connectorPath);
-          }
-          ctx.strokeStyle = '#AAAAAA';
-          ctx.lineWidth = 0.5;
-          ctx.stroke(connectorPath);
+            // Always stroke the connector path if outlines are shown, regardless of selection
+            ctx.strokeStyle = '#AAAAAA'; // Use default outline color
+            // ctx.lineWidth = 0.5; // Already set at the start of drawGrid
+            if (showOutlines) {
+              ctx.stroke(connectorPath);
+            }
 
-          // Draw label if enabled
-          if (showLabels) {
-            const fontSize = Math.max(8, Math.min(30, 12 * scale));
-            ctx.font = `${fontSize}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = isSelected ? '#FFFFFF' : '#000000';
-            ctx.fillText('i', connectorCenterX, centerY);
+            // Draw label if enabled
+            if (showLabels) {
+              const fontSize = Math.max(8, Math.min(30, 12 * scale));
+              ctx.font = `${fontSize}px Arial`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillStyle = isSelected ? '#FFFFFF' : '#000000';
+              ctx.fillText('i', connectorCenterX, centerY);
+            }
           }
         }
       }
@@ -515,11 +505,13 @@ const SimpleCircleRenderer: React.FC = () => {
         const isSelected = selectedSegments.has(`${row},${col},a`);
         ctx.beginPath();
         ctx.arc(centerX, centerY, effectiveInnerRadius, 0, Math.PI * 2);
-        ctx.fillStyle = showColors ? (isSelected ? COLORS.a : '#FFFFFF') : '#FFFFFF';
+        ctx.fillStyle = isSelected ? COLORS.a : '#FFFFFF';
         ctx.strokeStyle = isSelected ? '#000000' : '#AAAAAA';
-        ctx.lineWidth = isSelected ? 2 : 0.5;
         ctx.fill();
-        ctx.stroke();
+        // Conditionally stroke
+        if (showOutlines) {
+          ctx.stroke();
+        }
 
         // Draw label if enabled
         if (showLabels) {
@@ -532,7 +524,7 @@ const SimpleCircleRenderer: React.FC = () => {
         }
       }
     }
-  }, [scale, spacingFactor, effectiveOuterRadius, effectiveInnerRadius, effectiveCellWidth, effectiveCellHeight, selectedSegments, showLabels, showGrid, showDots, showColors]); 
+  }, [scale, spacingFactor, effectiveOuterRadius, effectiveInnerRadius, effectiveCellWidth, effectiveCellHeight, selectedSegments, showLabels, showOutlines]); 
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -549,8 +541,8 @@ const SimpleCircleRenderer: React.FC = () => {
     // Redraw the grid whenever relevant state changes
     drawGrid(ctx);
     
-  // Update dependencies to include base radii state and visibility toggles
-  }, [baseInnerRadius, baseOuterRadius, scale, spacingFactor, drawGrid, effectiveCellWidth, effectiveCellHeight, showGrid, showDots]); 
+  // Update dependencies to include base radii state
+  }, [baseInnerRadius, baseOuterRadius, scale, spacingFactor, drawGrid, effectiveCellWidth, effectiveCellHeight]); 
 
   // --- Reset Handlers ---
   const resetScale = useCallback(() => setScale(1.0), []);
@@ -606,69 +598,25 @@ const SimpleCircleRenderer: React.FC = () => {
           <span className="text-sm text-gray-600">{spacingFactor.toFixed(1)}x</span>
         </div>
 
-        {/* Color Toggle */}
+        {/* Label Toggle */}
         <div className="flex items-center gap-2">
-          <label className="font-medium">Show Colors:</label>
+          <label className="font-medium">Show Labels:</label>
           <button
-            className={`px-3 py-1 rounded ${showColors ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-            onClick={() => setShowColors(prev => !prev)}
+            className={`${showLabels ? 'bg-blue-500 text-white' : 'bg-gray-200'} px-3 py-1 rounded`}
+            onClick={() => setShowLabels(prev => !prev)}
           >
-            {showColors ? 'On' : 'Off'}
+            {showLabels ? 'On' : 'Off'}
           </button>
         </div>
 
-        {/* Label Toggle */}
-        <div className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            id="showLabels"
-            checked={showLabels}
-            onChange={() => setShowLabels(!showLabels)}
-            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-          />
-          <label htmlFor="showLabels" className="text-sm text-gray-700">Show Labels</label>
-        </div>
-
-        {/* Grid Toggle */}
-        <div className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            id="showGrid"
-            checked={showGrid}
-            onChange={() => setShowGrid(prev => !prev)}
-            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-          />
-          <label htmlFor="showGrid" className="text-sm text-gray-700">Show Grid</label>
-        </div>
-
-        {/* Dot Toggle */}
-        <div className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            id="showDots"
-            checked={showDots}
-            onChange={() => setShowDots(!showDots)}
-            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-          />
-          <label htmlFor="showDots" className="text-sm text-gray-700">Show Dots</label>
-        </div>
-
-        {/* Reset Button */}
+        {/* Outline Toggle */}
         <div className="flex items-center gap-2">
+          <label className="font-medium">Show Outlines:</label>
           <button
-            className="px-3 py-1 rounded bg-red-500 text-white"
-            onClick={() => {
-              resetScale();
-              resetSpacing();
-              resetInnerRadius();
-              resetOuterRadius();
-              setShowGrid(true);
-              setShowDots(true);
-              setShowColors(true);
-              setShowLabels(true);
-            }}
+            className={`${showOutlines ? 'bg-blue-500 text-white' : 'bg-gray-200'} px-3 py-1 rounded`}
+            onClick={() => setShowOutlines(prev => !prev)}
           >
-            Reset to Default
+            {showOutlines ? 'On' : 'Off'}
           </button>
         </div>
       </div>
