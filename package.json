@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "fabric": "^6.6.2"
+  },
+  "devDependencies": {
+    "@types/fabric": "^5.3.10"
+  }
+}
