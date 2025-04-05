@@ -11,6 +11,7 @@ const GridConnectorMaterial = shaderMaterial(
     u_thickness: 0.2, // Connector thickness control
     u_curvature: 0.5, // Controls the curvature of the connector
     u_resolution: new THREE.Vector2(1, 1),
+    u_activeConnector: 0, // 0 = none, 1 = red (AB), 2 = blue (CD)
     u_gridState: new THREE.DataTexture( // Will store grid state in a texture
       new Float32Array(4), // RGBA values per cell
       2, // width (for 2x2 grid)
@@ -45,6 +46,7 @@ const GridConnectorMaterial = shaderMaterial(
     uniform float u_thickness; // Controls connector thickness
     uniform float u_curvature; // Controls the curve shape
     uniform vec2 u_resolution;
+    uniform float u_activeConnector; // 0 = none, 1 = red (AB), 2 = blue (CD)
     uniform sampler2D u_gridState;
 
     // Helper function to get circle state from the grid state texture
@@ -64,6 +66,12 @@ const GridConnectorMaterial = shaderMaterial(
     }
 
     void main() {
+      // If no connector is active, discard immediately
+      if (u_activeConnector < 0.5) {
+        discard;
+        return;
+      }
+      
       // Calculate grid positions (2x2 grid)
       float gridOffset = u_spacing * 0.5;
       vec2 center_A = vec2(-gridOffset, gridOffset);   // Top-left (A)
@@ -86,23 +94,23 @@ const GridConnectorMaterial = shaderMaterial(
       // Check if relevant circles are active 
       bool circleAInnerActive = stateA.r > 0.5; // Top-left inner circle
       bool circleBInnerActive = stateB.r > 0.5; // Bottom-right inner circle
-      // Add checks for the other diagonal
       bool circleCInnerActive = stateC.r > 0.5; // Bottom-left inner circle
       bool circleDInnerActive = stateD.r > 0.5; // Top-right inner circle
       
-      // Check if either diagonal pair of inner circles is active
-      bool diagonalABActive = circleAInnerActive && circleBInnerActive;
-      bool diagonalCDActive = circleCInnerActive && circleDInnerActive;
+      // Determine which connector to draw based on active connector state
+      bool drawABConnector = u_activeConnector == 1.0;
+      bool drawCDConnector = u_activeConnector == 2.0;
       
-      // If neither diagonal is active, discard
-      if (!diagonalABActive && !diagonalCDActive) {
+      // Verify the required circles are active for the selected connector
+      if (drawABConnector && (!circleAInnerActive || !circleBInnerActive)) {
         discard;
         return;
       }
       
-      // Determine which connector to draw
-      bool drawABConnector = diagonalABActive;
-      bool drawCDConnector = diagonalCDActive;
+      if (drawCDConnector && (!circleCInnerActive || !circleDInnerActive)) {
+        discard;
+        return;
+      }
       
       // Distance fields for the inner black circles
       float sdfA = dist_A - u_radiusB;

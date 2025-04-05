@@ -84,16 +84,8 @@ const ConnectorMaterial = shaderMaterial(
       // Outer circle - use v_showOuter (attribute)
       float ringAlpha = 0.0;
       bool isOuterVisible = v_showOuter > 0.5;
-      if (isOuterVisible) {
-        // Full outer ring
-        float insideOuter = 1.0 - smoothstep(-edgeWidth, edgeWidth, outerCircleSDF);
-        // Subtract inner part IF BOTH inner and outer are visible
-        float innerMask = (isInnerVisible && isOuterVisible) ? (1.0 - smoothstep(-edgeWidth, edgeWidth, innerCircleSDF)) : 0.0;
-        ringAlpha = max(0.0, insideOuter - innerMask);
-      } else {
-        // Just an outline for the outer circle
-        ringAlpha = (1.0 - smoothstep(-lineWidth/2.0, lineWidth/2.0, abs(outerCircleSDF) - lineWidth/2.0)) * 0.8;
-      }
+      // Always render outer circle as outline only, never filled
+      ringAlpha = (1.0 - smoothstep(-lineWidth/2.0, lineWidth/2.0, abs(outerCircleSDF) - lineWidth/2.0)) * 0.8;
       
       // Combine both shapes
       float finalAlpha = max(innerAlpha, ringAlpha * 0.7);
@@ -103,19 +95,18 @@ const ConnectorMaterial = shaderMaterial(
       
       // Create different colors based on instance visibility
       vec3 innerColor = isInnerVisible ? vec3(0.0) : vec3(0.3); // Black when on, gray when outline
-      vec3 ringColor = isOuterVisible ? vec3(0.3) : vec3(0.5);  // Dark gray when on, lighter gray when outline
+      vec3 ringColor = vec3(0.5);  // Always light gray for outer circle outline
       
       // Determine final color
       vec3 color = vec3(1.0); // Default white (shouldn't be visible)
       if(abs(innerCircleSDF) < lineWidth / 2.0 + edgeWidth && !isInnerVisible) {
         color = innerColor; // Inner outline
-      } else if (abs(outerCircleSDF) < lineWidth / 2.0 + edgeWidth && !isOuterVisible) {
-         color = ringColor; // Outer outline
+      } else if (abs(outerCircleSDF) < lineWidth / 2.0 + edgeWidth) {
+         color = ringColor; // Outer outline - always render as outline
       } else if (innerCircleSDF < 0.0 && isInnerVisible) {
         color = innerColor; // Inner fill
-      } else if (outerCircleSDF < 0.0 && isOuterVisible) {
-        color = ringColor; // Outer ring fill
-      }
+      } 
+      // Removed the else if for outer circle fill since we never want it filled
 
       // Output with calculated alpha
       gl_FragColor = vec4(color, finalAlpha);

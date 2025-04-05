@@ -9,6 +9,7 @@ const SimpleConnectorMaterial = shaderMaterial(
     u_radiusA: 0.5, // Radius for defining circles A1, A2 (outer)
     u_boxSize: 0.5, // Default half-size for the bounding box 
     u_spacing: 0.89, // Grid spacing between centers
+    u_activeConnector: 0, // 0 = none, 1 = red (AB), 2 = blue (CD)
     u_gridState: new THREE.DataTexture( // Add grid state texture
       new Float32Array(4), // RGBA values per cell
       2, // width (for 2x2 grid)
@@ -42,6 +43,7 @@ const SimpleConnectorMaterial = shaderMaterial(
     uniform float u_radiusA; // Radius for defining circles A1, A2
     uniform float u_boxSize; // Receive box size from JS
     uniform float u_spacing; // Grid spacing between centers
+    uniform float u_activeConnector; // 0 = none, 1 = red (AB), 2 = blue (CD)
     uniform sampler2D u_gridState; // Grid state texture
 
     // Helper function to get circle state from the grid state texture
@@ -71,7 +73,13 @@ const SimpleConnectorMaterial = shaderMaterial(
     }
 
     void main() {
-      // Check if both B circles are active before drawing connector
+      // If no connector is active, discard immediately
+      if (u_activeConnector < 0.5) {
+        discard;
+        return;
+      }
+      
+      // Check if relevant circles are active
       vec4 stateA = getGridState(0, 0); // Top-left
       vec4 stateB = getGridState(1, 1); // Bottom-right
       vec4 stateC = getGridState(1, 0); // Bottom-left  
@@ -83,12 +91,17 @@ const SimpleConnectorMaterial = shaderMaterial(
       bool circleA1Active = stateC.r > 0.5; // Bottom-left inner circle
       bool circleA2Active = stateD.r > 0.5; // Top-right inner circle
       
-      // Check which diagonal is active
-      bool diagonalB1B2Active = circleB1Active && circleB2Active;
-      bool diagonalA1A2Active = circleA1Active && circleA2Active;
+      // Determine which connector to draw based on active connector state
+      bool drawRedConnector = u_activeConnector == 1.0;
+      bool drawBlueConnector = u_activeConnector == 2.0;
       
-      // Only draw connector if at least one diagonal has both inner circles active
-      if (!diagonalB1B2Active && !diagonalA1A2Active) {
+      // Verify the required circles are active for the selected connector
+      if (drawRedConnector && (!circleB1Active || !circleB2Active)) {
+        discard;
+        return;
+      }
+      
+      if (drawBlueConnector && (!circleA1Active || !circleA2Active)) {
         discard;
         return;
       }
@@ -126,7 +139,7 @@ const SimpleConnectorMaterial = shaderMaterial(
       // - Must be outside inner B circles (B1 and B2)
       // - Must be outside outer A circles (A1 and A2)
       float sdRedConnector = 1.0;
-      if (diagonalB1B2Active) {
+      if (drawRedConnector) {
         bool outsideInnerB = (sdB1Inner > 0.0) && (sdB2Inner > 0.0);
         bool outsideOuterA = (sdA1Outer > 0.0) && (sdA2Outer > 0.0);
         
@@ -139,7 +152,7 @@ const SimpleConnectorMaterial = shaderMaterial(
       // - Must be outside inner A circles (A1 and A2)
       // - Must be outside outer B circles (B1 and B2)
       float sdBlueConnector = 1.0;
-      if (diagonalA1A2Active) {
+      if (drawBlueConnector) {
         bool outsideInnerA = (sdA1Inner > 0.0) && (sdA2Inner > 0.0);
         bool outsideOuterB = (sdB1Outer > 0.0) && (sdB2Outer > 0.0);
         
@@ -151,14 +164,11 @@ const SimpleConnectorMaterial = shaderMaterial(
       // Determine if we're inside either connector
       if (sdRedConnector < 0.0 || sdBlueConnector < 0.0) {
         // Choose color based on which connector we're inside
-        if (sdRedConnector < 0.0 && sdBlueConnector < 0.0) {
-          // Inside both connectors - use purple
-          gl_FragColor = vec4(0.5, 0.25, 0.5, 1.0); // Purple
-        } else if (sdRedConnector < 0.0) {
-          // Inside red connector only
+        if (sdRedConnector < 0.0) {
+          // Red connector
           gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); // Red
         } else {
-          // Inside blue connector only
+          // Blue connector
           gl_FragColor = vec4(0.0, 0.5, 1.0, 1.0); // Blue
         }
       } else {

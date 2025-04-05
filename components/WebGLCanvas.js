@@ -61,6 +61,9 @@ function Scene() {
     [{ showInner: true, showOuter: true }, { showInner: true, showOuter: true }]
   ]);
 
+  // State for active connector - 0: none, 1: red (AB), 2: blue (CD)
+  const [activeConnector, setActiveConnector] = useState(0);
+
   const materialRef = useRef();
   const instancedMeshRef = useRef();
   const gridHelperRef = useRef();
@@ -130,6 +133,7 @@ function Scene() {
       gridConnectorMaterialRef.current.uniforms.u_radiusA.value = BASE_VALUES.radiusA * scaleFactor;
       gridConnectorMaterialRef.current.uniforms.u_spacing.value = gridSpacing;
       gridConnectorMaterialRef.current.uniforms.u_gridState.value = gridStateTexture;
+      gridConnectorMaterialRef.current.uniforms.u_activeConnector = { value: activeConnector };
       // Pass the connector thickness to the shader (if it exists - might remove later)
       if (gridConnectorMaterialRef.current.uniforms.u_thickness) {
         // gridConnectorMaterialRef.current.uniforms.u_thickness.value = connectorThickness; // Keep commented out for now
@@ -148,8 +152,9 @@ function Scene() {
       simpleConnectorMaterialRef.current.uniforms.u_boxSize.value = BASE_VALUES.boxSize * scaleFactor;
       simpleConnectorMaterialRef.current.uniforms.u_spacing.value = gridSpacing;
       simpleConnectorMaterialRef.current.uniforms.u_gridState.value = gridStateTexture;
+      simpleConnectorMaterialRef.current.uniforms.u_activeConnector = { value: activeConnector };
     }
-  }, [gridState, gridStateTexture, gridSpacing, debug, showSimple]);
+  }, [gridState, gridStateTexture, gridSpacing, debug, showSimple, activeConnector]);
 
   // Update camera zoom based on control
   useEffect(() => {
@@ -218,6 +223,48 @@ function Scene() {
   const handleClick = (event) => {
     if (!instancedMeshRef.current) return;
     
+    // Calculate scale factor based on ratio to base grid spacing
+    const scaleFactor = gridSpacing / BASE_VALUES.baseSpacing;
+    
+    // Scale the radius values for hit detection
+    const scaledRadiusB = BASE_VALUES.radiusB * scaleFactor;
+    const scaledRadiusA = BASE_VALUES.radiusA * scaleFactor;
+    
+    // Grid positions for detecting connector area
+    const gridOffset = gridSpacing * 0.5;
+    const centerA = new THREE.Vector2(-gridOffset, gridOffset);   // Top-left (A)
+    const centerB = new THREE.Vector2(gridOffset, -gridOffset);   // Bottom-right (B)
+    const centerC = new THREE.Vector2(-gridOffset, -gridOffset);  // Bottom-left (C)
+    const centerD = new THREE.Vector2(gridOffset, gridOffset);    // Top-right (D)
+    
+    // Create a 2D point from the click event for easier calculations
+    const clickPoint = new THREE.Vector2(event.point.x, event.point.y);
+    
+    // Check if we clicked on a connector area
+    const isInABConnectorArea = isPointInConnectorArea(clickPoint, centerA, centerB, scaledRadiusB, scaledRadiusA);
+    const isInCDConnectorArea = isPointInConnectorArea(clickPoint, centerC, centerD, scaledRadiusB, scaledRadiusA);
+    
+    if (isInABConnectorArea || isInCDConnectorArea) {
+      // Clicked in a connector area, cycle the active connector state
+      setActiveConnector(prevState => {
+        if (prevState === 0) {
+          // None -> First connector (Red AB or Blue CD based on which area clicked)
+          return isInABConnectorArea ? 1 : 2;
+        } else if (prevState === 1 && isInABConnectorArea) {
+          // Red AB -> Blue CD
+          return 2;
+        } else if (prevState === 2 && isInCDConnectorArea) {
+          // Blue CD -> None
+          return 0;
+        } else {
+          // Toggle between current connector and None
+          return prevState === 0 ? (isInABConnectorArea ? 1 : 2) : 0;
+        }
+      });
+      
+      return; // Exit after handling connector click
+    }
+    
     // If no instance was hit, return
     if (event.instanceId === undefined) return;
     
@@ -236,13 +283,6 @@ function Scene() {
     // Calculate distance from click to instance center
     const distFromCenter = pointCopy.distanceTo(instancePosition);
     
-    // Calculate scale factor based on ratio to base grid spacing
-    const scaleFactor = gridSpacing / BASE_VALUES.baseSpacing;
-    
-    // Scale the radius values for hit detection
-    const scaledRadiusB = BASE_VALUES.radiusB * scaleFactor;
-    const scaledRadiusA = BASE_VALUES.radiusA * scaleFactor;
-    
     let newInner = currentState.showInner;
     let newOuter = currentState.showOuter;
 
@@ -250,6 +290,42 @@ function Scene() {
       // Clicked inner circle
       newInner = !currentState.showInner;
       console.log(`Toggling inner circle: ${currentState.showInner} -> ${newInner}`);
+      
+      // Check if toggling off an inner circle that was part of an active connector
+      if (!newInner) {
+        // Top-left circle is part of red connector
+        if (row === 0 && col === 0 && activeConnector === 1) {
+          setActiveConnector(0);
+        }
+        // Bottom-right circle is part of red connector
+        else if (row === 1 && col === 1 && activeConnector === 1) {
+          setActiveConnector(0);
+        }
+        // Bottom-left circle is part of blue connector
+        else if (row === 1 && col === 0 && activeConnector === 2) {
+          setActiveConnector(0);
+        }
+        // Top-right circle is part of blue connector
+        else if (row === 0 && col === 1 && activeConnector === 2) {
+          setActiveConnector(0);
+        }
+      } 
+      // If toggling ON an inner circle, check if it completes a diagonal pair
+      else if (newInner) {
+        // Only activate connector if no connector is currently active
+        if (activeConnector === 0) {
+          // Check if this completes a diagonal pair - Red connector (top-left to bottom-right)
+          if ((row === 0 && col === 0 && gridState[1][1].showInner) || 
+              (row === 1 && col === 1 && gridState[0][0].showInner)) {
+            setActiveConnector(1); // Activate red connector
+          }
+          // Check if this completes a diagonal pair - Blue connector (bottom-left to top-right)
+          else if ((row === 1 && col === 0 && gridState[0][1].showInner) || 
+                  (row === 0 && col === 1 && gridState[1][0].showInner)) {
+            setActiveConnector(2); // Activate blue connector
+          }
+        }
+      }
     } else if (distFromCenter <= scaledRadiusA) {
       // Clicked outer circle
       newOuter = !currentState.showOuter;
@@ -263,6 +339,37 @@ function Scene() {
         return newState;
       });
     }
+  };
+  
+  // Helper function to determine if a point is in the connector area
+  const isPointInConnectorArea = (point, center1, center2, innerRadius, outerRadius) => {
+    // Check that point is not inside either inner circle
+    const distToCenter1 = point.distanceTo(center1);
+    const distToCenter2 = point.distanceTo(center2);
+    
+    if (distToCenter1 < innerRadius || distToCenter2 < innerRadius) {
+      return false; // Inside an inner circle
+    }
+    
+    // Project point onto the line connecting the centers
+    const direction = new THREE.Vector2().subVectors(center2, center1).normalize();
+    const center1ToPoint = new THREE.Vector2().subVectors(point, center1);
+    const projectionLength = center1ToPoint.dot(direction);
+    
+    // Check if projection falls between the two centers (with some buffer)
+    const distanceBetweenCenters = center1.distanceTo(center2);
+    if (projectionLength < -outerRadius || projectionLength > distanceBetweenCenters + outerRadius) {
+      return false; // Outside the region between circles
+    }
+    
+    // Calculate perpendicular distance from point to line
+    const projectedPoint = new THREE.Vector2().copy(center1).addScaledVector(direction, projectionLength);
+    const perpDistance = point.distanceTo(projectedPoint);
+    
+    // Define a reasonable width for the connector area
+    const connectorWidth = outerRadius * 0.8;
+    
+    return perpDistance < connectorWidth;
   };
 
   // Calculate plane size based on the grid size and spacing
