@@ -8,11 +8,5 @@
     "files": [
       "static/chunks/node_modules_mediapipe_tasks-vision_vision_bundle_mjs.js"
     ]
-  },
-  "index.js -> ../components/WebGLCanvas": {
-    "id": "index.js -> ../components/WebGLCanvas",
-    "files": [
-      "static/chunks/components_WebGLCanvas_js.js"
-    ]
   }
 }

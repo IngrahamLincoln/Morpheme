@@ -1,28 +1,40 @@
-import Head from 'next/head';
-import dynamic from 'next/dynamic';
-import styles from '../styles/Home.module.css';
+import React from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrthographicCamera } from '@react-three/drei';
+import { Leva, useControls } from 'leva';
+import GridScene from '../components/GridScene'; // Adjust path if necessary
+import styles from '../styles/Home.module.css'; // Assuming you have this for styling
 
-// Dynamically import the WebGLCanvas component to ensure it only runs client-side
-const WebGLCanvas = dynamic(() => import('../components/WebGLCanvas'), {
-  ssr: false,
-  loading: () => <p>Loading WebGL Canvas...</p>, // Optional loading state
-});
+const App = () => {
+  // Leva controls for camera zoom
+  const { cameraZoom } = useControls({
+    cameraZoom: { value: 50, min: 10, max: 200, step: 1 },
+  });
 
-export default function Home() {
   return (
     <div className={styles.container}>
-      <Head>
-        <title>WebGL Dot Grid MVP</title>
-        <meta name="description" content="Testing custom connectors with WebGL" />
-        <link rel="icon" href="/favicon.ico" />
-      </Head>
-
-      <main className={styles.main}>
-        <h1 className={styles.title}>WebGL Dot Grid Connector Test</h1>
-        <div style={{ width: '80vw', height: '70vh', border: '1px solid #ccc' }}>
-          <WebGLCanvas />
-        </div>
-      </main>
+      <Leva collapsed /> {/* Leva panel for controls */}
+      <Canvas
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+      >
+        {/* Use OrthographicCamera for 2D view */}
+        <OrthographicCamera
+          makeDefault // Sets this camera as the default
+          zoom={cameraZoom}
+          position={[0, 0, 100]} // Positioned to look along -Z axis
+          near={0.1}
+          far={1000}
+        />
+        <ambientLight intensity={1.0} /> {/* Basic lighting */}
+        
+        {/* Render the main scene component */}
+        <GridScene /> 
+        
+        {/* Optional: Add OrbitControls if needed for debugging/navigation */}
+        {/* <OrbitControls enableRotate={false} /> */}
+      </Canvas>
     </div>
   );
-} 
+};
+
+export default App; 
