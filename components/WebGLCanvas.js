@@ -6,6 +6,7 @@ import { useControls, folder, button } from 'leva'; // Import leva with button i
 import { ConnectorMaterial } from './ConnectorMaterial'; // We'll create this shader material
 import { GridConnectorMaterial } from './GridConnectorMaterial'; // Import our new connector material
 import { SimpleConnectorMaterial } from './SimpleConnectorMaterial'; // Import simple connector for debugging
+import { Html } from '@react-three/drei';
 
 // Extend THREE namespace with our custom shader materials
 extend({ ConnectorMaterial, GridConnectorMaterial, SimpleConnectorMaterial });
@@ -44,6 +45,9 @@ function Scene() {
   const scaledRadiusA = (BASE_VALUES.radiusA * scaleFactor).toFixed(3);
   const scaledBoxSize = (BASE_VALUES.boxSize * scaleFactor).toFixed(3);
   
+  // State for active connector - 0: none, 1: red (AB), 2: blue (CD), 3: orange top row, 4: orange bottom row
+  const [activeConnector, setActiveConnector] = useState(0);
+  
   // Display current values in a separate control panel
   useControls(
     'Current Values',
@@ -51,6 +55,12 @@ function Scene() {
       innerRadius: { value: scaledRadiusB, label: 'Inner Radius (B)', disabled: true },
       outerRadius: { value: scaledRadiusA, label: 'Outer Radius (A)', disabled: true },
       boxSize: { value: scaledBoxSize, label: 'BBox Size', disabled: true },
+      activeConnector: { 
+        value: activeConnector.toString(), 
+        label: 'Active Connector', 
+        disabled: true,
+        onChange: () => {}, // Dummy function to prevent errors
+      },
     }
   );
 
@@ -60,9 +70,6 @@ function Scene() {
     [{ showInner: true, showOuter: true }, { showInner: true, showOuter: true }],
     [{ showInner: true, showOuter: true }, { showInner: true, showOuter: true }]
   ]);
-
-  // State for active connector - 0: none, 1: red (AB), 2: blue (CD)
-  const [activeConnector, setActiveConnector] = useState(0);
 
   const materialRef = useRef();
   const instancedMeshRef = useRef();
@@ -230,42 +237,57 @@ function Scene() {
     const scaledRadiusB = BASE_VALUES.radiusB * scaleFactor;
     const scaledRadiusA = BASE_VALUES.radiusA * scaleFactor;
     
-    // Grid positions for detecting connector area
-    const gridOffset = gridSpacing * 0.5;
-    const centerA = new THREE.Vector2(-gridOffset, gridOffset);   // Top-left (A)
-    const centerB = new THREE.Vector2(gridOffset, -gridOffset);   // Bottom-right (B)
-    const centerC = new THREE.Vector2(-gridOffset, -gridOffset);  // Bottom-left (C)
-    const centerD = new THREE.Vector2(gridOffset, gridOffset);    // Top-right (D)
+    // Grid positions for detecting connector areas
+    const centerA = new THREE.Vector2(-gridSpacing * 0.5, gridSpacing * 0.5);   // Top-left (A)
+    const centerB = new THREE.Vector2(gridSpacing * 0.5, -gridSpacing * 0.5);   // Bottom-right (B)
+    const centerC = new THREE.Vector2(-gridSpacing * 0.5, -gridSpacing * 0.5);  // Bottom-left (C)
+    const centerD = new THREE.Vector2(gridSpacing * 0.5, gridSpacing * 0.5);    // Top-right (D)
     
     // Create a 2D point from the click event for easier calculations
     const clickPoint = new THREE.Vector2(event.point.x, event.point.y);
     
-    // Check if we clicked on a connector area
-    const isInABConnectorArea = isPointInConnectorArea(clickPoint, centerA, centerB, scaledRadiusB, scaledRadiusA);
-    const isInCDConnectorArea = isPointInConnectorArea(clickPoint, centerC, centerD, scaledRadiusB, scaledRadiusA);
+    console.log("Click position:", clickPoint);
+    console.log("Grid centers:", { A: centerA, B: centerB, C: centerC, D: centerD });
     
-    if (isInABConnectorArea || isInCDConnectorArea) {
-      // Clicked in a connector area, cycle the active connector state
-      setActiveConnector(prevState => {
-        if (prevState === 0) {
-          // None -> First connector (Red AB or Blue CD based on which area clicked)
-          return isInABConnectorArea ? 1 : 2;
-        } else if (prevState === 1 && isInABConnectorArea) {
-          // Red AB -> Blue CD
-          return 2;
-        } else if (prevState === 2 && isInCDConnectorArea) {
-          // Blue CD -> None
-          return 0;
-        } else {
-          // Toggle between current connector and None
-          return prevState === 0 ? (isInABConnectorArea ? 1 : 2) : 0;
-        }
-      });
+    // First check if we clicked in any of the horizontal connector areas
+    const isInTopRowConnectorArea = isPointInHorizontalConnectorArea(clickPoint, centerA, centerD, scaledRadiusB);
+    const isInBottomRowConnectorArea = isPointInHorizontalConnectorArea(clickPoint, centerC, centerB, scaledRadiusB);
+    
+    // Then check if we clicked in any diagonal connector area
+    const isInAnyDiagonalArea = 
+      isPointInConnectorArea(clickPoint, centerA, centerB, scaledRadiusB, scaledRadiusA) || 
+      isPointInConnectorArea(clickPoint, centerC, centerD, scaledRadiusB, scaledRadiusA);
+    
+    console.log("Connector area detection:", {
+      "Top row": isInTopRowConnectorArea,
+      "Bottom row": isInBottomRowConnectorArea,
+      "Diagonal": isInAnyDiagonalArea
+    });
+    
+    // Handle clicks on connector areas
+    if (isInTopRowConnectorArea || isInBottomRowConnectorArea) {
+      console.log("Handling horizontal connector click");
       
-      return; // Exit after handling connector click
+      if (isInTopRowConnectorArea) {
+        console.log("Clicked top row connector");
+        handleHorizontalConnectorClick(0, 0, 0, 1); // Top row: (0,0) to (0,1)
+        return;
+      }
+      
+      if (isInBottomRowConnectorArea) {
+        console.log("Clicked bottom row connector");
+        handleHorizontalConnectorClick(1, 0, 1, 1); // Bottom row: (1,0) to (1,1)
+        return;
+      }
+    }
+    // Check for diagonal area clicks
+    else if (isInAnyDiagonalArea) {
+      console.log("Handling diagonal connector click");
+      handleDiagonalConnectorCycle();
+      return;
     }
     
-    // If no instance was hit, return
+    // If no connector area was hit, check for circle clicks
     if (event.instanceId === undefined) return;
     
     const instanceId = event.instanceId;
@@ -293,36 +315,64 @@ function Scene() {
       
       // Check if toggling off an inner circle that was part of an active connector
       if (!newInner) {
-        // Top-left circle is part of red connector
-        if (row === 0 && col === 0 && activeConnector === 1) {
+        // Top-left circle is part of red connector or top horizontal connector
+        if (row === 0 && col === 0 && (activeConnector === 1 || activeConnector === 3)) {
           setActiveConnector(0);
         }
-        // Bottom-right circle is part of red connector
-        else if (row === 1 && col === 1 && activeConnector === 1) {
+        // Bottom-right circle is part of red connector or bottom horizontal connector
+        else if (row === 1 && col === 1 && (activeConnector === 1 || activeConnector === 4)) {
           setActiveConnector(0);
         }
-        // Bottom-left circle is part of blue connector
-        else if (row === 1 && col === 0 && activeConnector === 2) {
+        // Bottom-left circle is part of blue connector or bottom horizontal connector
+        else if (row === 1 && col === 0 && (activeConnector === 2 || activeConnector === 4)) {
           setActiveConnector(0);
         }
-        // Top-right circle is part of blue connector
-        else if (row === 0 && col === 1 && activeConnector === 2) {
+        // Top-right circle is part of blue connector or top horizontal connector
+        else if (row === 0 && col === 1 && (activeConnector === 2 || activeConnector === 3)) {
           setActiveConnector(0);
         }
       } 
-      // If toggling ON an inner circle, check if it completes a diagonal pair
+      // If toggling ON an inner circle, check if it completes a pair
       else if (newInner) {
-        // Only activate connector if no connector is currently active
-        if (activeConnector === 0) {
-          // Check if this completes a diagonal pair - Red connector (top-left to bottom-right)
-          if ((row === 0 && col === 0 && gridState[1][1].showInner) || 
-              (row === 1 && col === 1 && gridState[0][0].showInner)) {
-            setActiveConnector(1); // Activate red connector
+        // Only activate connector if no connector is currently active,
+        // or if a connector is active in a different row
+        const currentRow = row;
+        const isConnectorInOtherRow = 
+          (activeConnector === 3 && currentRow === 1) || // Top row connector active but we're in bottom row 
+          (activeConnector === 4 && currentRow === 0);   // Bottom row connector active but we're in top row
+          
+        if (activeConnector === 0 || isConnectorInOtherRow) {
+          // Check for diagonal pairs - only if no connectors are active
+          if (activeConnector === 0) {
+            // Red connector (top-left to bottom-right)
+            if ((row === 0 && col === 0 && gridState[1][1].showInner) || 
+                (row === 1 && col === 1 && gridState[0][0].showInner)) {
+              setActiveConnector(1); // Activate red connector
+              return;
+            }
+            // Blue connector (bottom-left to top-right)
+            else if ((row === 1 && col === 0 && gridState[0][1].showInner) || 
+                    (row === 0 && col === 1 && gridState[1][0].showInner)) {
+              setActiveConnector(2); // Activate blue connector
+              return;
+            }
           }
-          // Check if this completes a diagonal pair - Blue connector (bottom-left to top-right)
-          else if ((row === 1 && col === 0 && gridState[0][1].showInner) || 
-                  (row === 0 && col === 1 && gridState[1][0].showInner)) {
-            setActiveConnector(2); // Activate blue connector
+          
+          // Check for horizontal pairs in the current row
+          if (currentRow === 0) {
+            // Top row connector - only activate if no bottom connector exists
+            if (activeConnector !== 4 && 
+                ((row === 0 && col === 0 && gridState[0][1].showInner) || 
+                (row === 0 && col === 1 && gridState[0][0].showInner))) {
+              setActiveConnector(3); // Activate top row horizontal connector
+            }
+          } else if (currentRow === 1) {
+            // Bottom row connector - only activate if no top connector exists
+            if (activeConnector !== 3 && 
+                ((row === 1 && col === 0 && gridState[1][1].showInner) || 
+                (row === 1 && col === 1 && gridState[1][0].showInner))) {
+              setActiveConnector(4); // Activate bottom row horizontal connector
+            }
           }
         }
       }
@@ -341,7 +391,7 @@ function Scene() {
     }
   };
   
-  // Helper function to determine if a point is in the connector area
+  // Helper function to determine if a point is in a diagonal connector area
   const isPointInConnectorArea = (point, center1, center2, innerRadius, outerRadius) => {
     // Check that point is not inside either inner circle
     const distToCenter1 = point.distanceTo(center1);
@@ -358,7 +408,9 @@ function Scene() {
     
     // Check if projection falls between the two centers (with some buffer)
     const distanceBetweenCenters = center1.distanceTo(center2);
-    if (projectionLength < -outerRadius || projectionLength > distanceBetweenCenters + outerRadius) {
+    
+    // Define the active area along the diagonal line
+    if (projectionLength < innerRadius || projectionLength > distanceBetweenCenters - innerRadius) {
       return false; // Outside the region between circles
     }
     
@@ -366,10 +418,105 @@ function Scene() {
     const projectedPoint = new THREE.Vector2().copy(center1).addScaledVector(direction, projectionLength);
     const perpDistance = point.distanceTo(projectedPoint);
     
-    // Define a reasonable width for the connector area
-    const connectorWidth = outerRadius * 0.8;
+    // Define a narrow corridor along the diagonal line
+    const connectorWidth = innerRadius * 0.8;
     
     return perpDistance < connectorWidth;
+  };
+
+  // Helper function to determine if a point is in a horizontal connector area (Area A)
+  const isPointInHorizontalConnectorArea = (point, center1, center2, radius) => {
+    // Check that point is not inside either inner circle
+    const distToCenter1 = point.distanceTo(center1);
+    const distToCenter2 = point.distanceTo(center2);
+    
+    if (distToCenter1 < radius || distToCenter2 < radius) {
+      return false; // Inside an inner circle
+    }
+    
+    // Calculate the rectangle bounds for the horizontal connector (Area A)
+    // Ensure it's wider and shorter than the diagonal area
+    const midY = (center1.y + center2.y) / 2;
+    const left = Math.min(center1.x, center2.x) + radius;
+    const right = Math.max(center1.x, center2.x) - radius;
+    const halfHeight = radius * 0.6; // Narrower height to distinguish from diagonal
+    
+    // Check if point is within the horizontal connector rectangle
+    return (
+      point.x >= left && 
+      point.x <= right && 
+      point.y >= midY - halfHeight && 
+      point.y <= midY + halfHeight
+    );
+  };
+  
+  // Helper function to handle horizontal connector clicks (toggle on/off)
+  const handleHorizontalConnectorClick = (row1, col1, row2, col2) => {
+    // Check if the circles in this row are already part of diagonal connectors
+    const hasCircle1InDiagonalConnector = 
+      (activeConnector === 1 && ((row1 === 0 && col1 === 0) || (row1 === 1 && col1 === 1))) || 
+      (activeConnector === 2 && ((row1 === 1 && col1 === 0) || (row1 === 0 && col1 === 1)));
+      
+    const hasCircle2InDiagonalConnector = 
+      (activeConnector === 1 && ((row2 === 0 && col2 === 0) || (row2 === 1 && col2 === 1))) || 
+      (activeConnector === 2 && ((row2 === 1 && col2 === 0) || (row2 === 0 && col2 === 1)));
+      
+    // Don't toggle if any circle is part of a diagonal connector
+    if (hasCircle1InDiagonalConnector || hasCircle2InDiagonalConnector) {
+      console.log("Can't toggle horizontal connector: circles already part of diagonal connector");
+      return;
+    }
+    
+    // Check if both circles are active
+    if (!gridState[row1][col1].showInner || !gridState[row2][col2].showInner) {
+      console.log("Can't toggle horizontal connector: one or both circles are inactive");
+      return;
+    }
+    
+    // Determine the horizontal connector's state (3 for top row, 4 for bottom row)
+    const horizontalConnectorState = row1 === 0 ? 3 : 4;
+    
+    // Toggle the connector - always toggle regardless of current state
+    setActiveConnector(prevState => {
+      // If this connector is already active, turn it off
+      if (prevState === horizontalConnectorState) {
+        return 0;
+      }
+      // If another connector in this row is active, leave it alone
+      else if ((prevState === 3 && row1 === 0) || (prevState === 4 && row1 === 1)) {
+        return 0; // Turn off existing connector in same row
+      }
+      // If no connector or a connector in different row, activate this one
+      else {
+        return horizontalConnectorState;
+      }
+    });
+  };
+  
+  // Helper function to handle diagonal connector clicks (cycle through none/red/blue)
+  const handleDiagonalConnectorCycle = () => {
+    // Check if any of these circles are part of horizontal connectors
+    const hasCircleInHorizontalConnector = 
+      activeConnector === 3 || activeConnector === 4;
+      
+    if (hasCircleInHorizontalConnector) {
+      console.log("Can't toggle diagonal connector: circles already part of horizontal connector");
+      return;
+    }
+    
+    // Check if all four circles are active
+    if (!gridState[0][0].showInner || !gridState[0][1].showInner || 
+        !gridState[1][0].showInner || !gridState[1][1].showInner) {
+      console.log("Can't toggle diagonal connector: one or more circles are inactive");
+      return;
+    }
+    
+    // Cycle through diagonal states: None (0) -> Red (1) -> Blue (2) -> None (0)
+    setActiveConnector(prevState => {
+      if (prevState === 0) return 1;      // None -> Red
+      else if (prevState === 1) return 2; // Red -> Blue
+      else return 0;                      // Blue -> None
+    });
   };
 
   // Calculate plane size based on the grid size and spacing
@@ -388,8 +535,51 @@ function Scene() {
         </mesh>
       )}
 
+      {/* Debug connector areas if debug mode is on - invisible but still useful for debugging */}
+      {debug && (
+        <>
+          {/* These meshes are now invisible but kept for collision detection reference */}
+          <mesh position={[0, gridSpacing * 0.5, 0.05]} visible={false}>
+            <planeGeometry args={[
+              gridSpacing - 2 * scaledRadiusB, 
+              scaledRadiusB * 0.6 * 2
+            ]} />
+            <meshBasicMaterial opacity={0} transparent />
+          </mesh>
+          
+          <mesh position={[0, -gridSpacing * 0.5, 0.05]} visible={false}>
+            <planeGeometry args={[
+              gridSpacing - 2 * scaledRadiusB, 
+              scaledRadiusB * 0.6 * 2
+            ]} />
+            <meshBasicMaterial opacity={0} transparent />
+          </mesh>
+          
+          <mesh position={[0, 0, 0.05]} rotation={[0, 0, -Math.PI / 4]} visible={false}>
+            <planeGeometry args={[
+              Math.sqrt(2) * gridSpacing - 2 * scaledRadiusB, 
+              scaledRadiusB * 0.8 * 2
+            ]} />
+            <meshBasicMaterial opacity={0} transparent />
+          </mesh>
+          
+          <mesh position={[0, 0, 0.05]} rotation={[0, 0, Math.PI / 4]} visible={false}>
+            <planeGeometry args={[
+              Math.sqrt(2) * gridSpacing - 2 * scaledRadiusB, 
+              scaledRadiusB * 0.8 * 2
+            ]} />
+            <meshBasicMaterial opacity={0} transparent />
+          </mesh>
+        </>
+      )}
+
       {/* Simple connector for debugging (higher z-index so it's visible) */}
-      <mesh ref={simpleConnectorMeshRef} position={[0, 0, 0.1]} visible={showSimple}>
+      <mesh 
+        ref={simpleConnectorMeshRef} 
+        position={[0, 0, 0.1]} 
+        visible={showSimple}
+        onClick={handleClick}
+      >
         <planeGeometry args={[connectorPlaneSize, connectorPlaneSize]} />
         <simpleConnectorMaterial
           ref={simpleConnectorMaterialRef}
@@ -400,7 +590,12 @@ function Scene() {
       </mesh>
 
       {/* Add original connector mesh for the shapes between circles */}
-      <mesh ref={connectorMeshRef} position={[0, 0, -0.1]} visible={!showSimple}>
+      <mesh 
+        ref={connectorMeshRef} 
+        position={[0, 0, -0.1]} 
+        visible={!showSimple}
+        onClick={handleClick}
+      >
         <planeGeometry args={[connectorPlaneSize, connectorPlaneSize]} />
         <gridConnectorMaterial
           ref={gridConnectorMaterialRef}
@@ -408,6 +603,15 @@ function Scene() {
           transparent={true}
           depthTest={false}
         />
+      </mesh>
+
+      {/* Transparent background plane to catch all clicks */}
+      <mesh 
+        position={[0, 0, -0.15]} 
+        onClick={handleClick}
+      >
+        <planeGeometry args={[connectorPlaneSize, connectorPlaneSize]} />
+        <meshBasicMaterial color="white" opacity={0.01} transparent />
       </mesh>
 
       {/* Circles */}

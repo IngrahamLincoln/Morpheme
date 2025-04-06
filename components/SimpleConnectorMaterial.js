@@ -9,7 +9,7 @@ const SimpleConnectorMaterial = shaderMaterial(
     u_radiusA: 0.5, // Radius for defining circles A1, A2 (outer)
     u_boxSize: 0.5, // Default half-size for the bounding box 
     u_spacing: 0.89, // Grid spacing between centers
-    u_activeConnector: 0, // 0 = none, 1 = red (AB), 2 = blue (CD)
+    u_activeConnector: 0, // 0 = none, 1 = red (AB), 2 = blue (CD), 3 = orange top row, 4 = orange bottom row
     u_gridState: new THREE.DataTexture( // Add grid state texture
       new Float32Array(4), // RGBA values per cell
       2, // width (for 2x2 grid)
@@ -43,7 +43,7 @@ const SimpleConnectorMaterial = shaderMaterial(
     uniform float u_radiusA; // Radius for defining circles A1, A2
     uniform float u_boxSize; // Receive box size from JS
     uniform float u_spacing; // Grid spacing between centers
-    uniform float u_activeConnector; // 0 = none, 1 = red (AB), 2 = blue (CD)
+    uniform float u_activeConnector; // 0 = none, 1 = red (AB), 2 = blue (CD), 3 = orange top row, 4 = orange bottom row
     uniform sampler2D u_gridState; // Grid state texture
 
     // Helper function to get circle state from the grid state texture
@@ -94,6 +94,8 @@ const SimpleConnectorMaterial = shaderMaterial(
       // Determine which connector to draw based on active connector state
       bool drawRedConnector = u_activeConnector == 1.0;
       bool drawBlueConnector = u_activeConnector == 2.0;
+      bool drawTopOrangeConnector = u_activeConnector == 3.0;
+      bool drawBottomOrangeConnector = u_activeConnector == 4.0;
       
       // Verify the required circles are active for the selected connector
       if (drawRedConnector && (!circleB1Active || !circleB2Active)) {
@@ -102,6 +104,16 @@ const SimpleConnectorMaterial = shaderMaterial(
       }
       
       if (drawBlueConnector && (!circleA1Active || !circleA2Active)) {
+        discard;
+        return;
+      }
+      
+      if (drawTopOrangeConnector && (!circleB1Active || !circleA2Active)) {
+        discard;
+        return;
+      }
+      
+      if (drawBottomOrangeConnector && (!circleA1Active || !circleB2Active)) {
         discard;
         return;
       }
@@ -133,8 +145,37 @@ const SimpleConnectorMaterial = shaderMaterial(
       vec2 boxHalfSize = vec2(u_boxSize);
       float sdfBoundingBox = sdBox(vWorldPos, boxCenter, boxHalfSize);
       
-      // Calculate connector shapes based on the new specifications
+      // Handle horizontal connectors (orange)
+      if (drawTopOrangeConnector || drawBottomOrangeConnector) {
+        // Define horizontal connector dimensions
+        vec2 connector1Start, connector1End;
+        
+        if (drawTopOrangeConnector) {
+          connector1Start = centerB1;
+          connector1End = centerA2;
+        } else { // Bottom row
+          connector1Start = centerA1;
+          connector1End = centerB2;
+        }
+        
+        // Calculate if we're inside the horizontal connector
+        float midY = (connector1Start.y + connector1End.y) * 0.5;
+        float leftX = min(connector1Start.x, connector1End.x);
+        float rightX = max(connector1Start.x, connector1End.x);
+        
+        // Check if inside rect of height 2*radiusB
+        if (vWorldPos.x >= leftX && vWorldPos.x <= rightX && 
+            vWorldPos.y >= midY - u_radiusB && vWorldPos.y <= midY + u_radiusB) {
+          // Orange for horizontal connector
+          gl_FragColor = vec4(1.0, 0.5, 0.0, 1.0);
+          return;
+        }
+        
+        discard;
+        return;
+      }
       
+      // Calculate connector shapes for diagonal connectors
       // Red connector (B1-B2 diagonal):
       // - Must be outside inner B circles (B1 and B2)
       // - Must be outside outer A circles (A1 and A2)

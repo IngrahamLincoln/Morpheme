@@ -11,7 +11,7 @@ const GridConnectorMaterial = shaderMaterial(
     u_thickness: 0.2, // Connector thickness control
     u_curvature: 0.5, // Controls the curvature of the connector
     u_resolution: new THREE.Vector2(1, 1),
-    u_activeConnector: 0, // 0 = none, 1 = red (AB), 2 = blue (CD)
+    u_activeConnector: 0, // 0 = none, 1 = red (AB), 2 = blue (CD), 3 = orange top row, 4 = orange bottom row
     u_gridState: new THREE.DataTexture( // Will store grid state in a texture
       new Float32Array(4), // RGBA values per cell
       2, // width (for 2x2 grid)
@@ -46,7 +46,7 @@ const GridConnectorMaterial = shaderMaterial(
     uniform float u_thickness; // Controls connector thickness
     uniform float u_curvature; // Controls the curve shape
     uniform vec2 u_resolution;
-    uniform float u_activeConnector; // 0 = none, 1 = red (AB), 2 = blue (CD)
+    uniform float u_activeConnector; // 0 = none, 1 = red (AB), 2 = blue (CD), 3 = orange top row, 4 = orange bottom row
     uniform sampler2D u_gridState;
 
     // Helper function to get circle state from the grid state texture
@@ -63,6 +63,22 @@ const GridConnectorMaterial = shaderMaterial(
     float smin(float a, float b, float k) {
       float h = max(k - abs(a - b), 0.0) / k;
       return min(a, b) - h * h * k * 0.25;
+    }
+
+    // Helper function for horizontal connector
+    bool isInHorizontalConnector(vec2 point, vec2 center1, vec2 center2, float radius) {
+      // Calculate rectangle bounds
+      float midY = (center1.y + center2.y) * 0.5;
+      float leftX = min(center1.x, center2.x);
+      float rightX = max(center1.x, center2.x);
+      
+      // Check if inside the rectangle
+      if (point.x >= leftX && point.x <= rightX && 
+          point.y >= midY - radius && point.y <= midY + radius) {
+        return true;
+      }
+      
+      return false;
     }
 
     void main() {
@@ -97,10 +113,62 @@ const GridConnectorMaterial = shaderMaterial(
       bool circleCInnerActive = stateC.r > 0.5; // Bottom-left inner circle
       bool circleDInnerActive = stateD.r > 0.5; // Top-right inner circle
       
-      // Determine which connector to draw based on active connector state
+      // Determine connector type based on active connector state
       bool drawABConnector = u_activeConnector == 1.0;
       bool drawCDConnector = u_activeConnector == 2.0;
+      bool drawTopRowConnector = u_activeConnector == 3.0;
+      bool drawBottomRowConnector = u_activeConnector == 4.0;
       
+      // Handle the horizontal connectors first (orange)
+      if (drawTopRowConnector) {
+        // Verify the required circles are active
+        if (!circleAInnerActive || !circleDInnerActive) {
+          discard;
+          return;
+        }
+        
+        // Check if we're outside the inner circles
+        if (dist_A <= u_radiusB || dist_D <= u_radiusB) {
+          discard;
+          return;
+        }
+        
+        // Check if the point is within the horizontal connector area
+        if (isInHorizontalConnector(vWorldPos, center_A, center_D, u_radiusB)) {
+          // Draw the horizontal connector
+          gl_FragColor = vec4(1.0, 0.5, 0.0, 1.0); // Orange for horizontal connector
+          return;
+        }
+        
+        discard;
+        return;
+      }
+      
+      if (drawBottomRowConnector) {
+        // Verify the required circles are active
+        if (!circleCInnerActive || !circleBInnerActive) {
+          discard;
+          return;
+        }
+        
+        // Check if we're outside the inner circles
+        if (dist_C <= u_radiusB || dist_B <= u_radiusB) {
+          discard;
+          return;
+        }
+        
+        // Check if the point is within the horizontal connector area
+        if (isInHorizontalConnector(vWorldPos, center_C, center_B, u_radiusB)) {
+          // Draw the horizontal connector
+          gl_FragColor = vec4(1.0, 0.5, 0.0, 1.0); // Orange for horizontal connector
+          return;
+        }
+        
+        discard;
+        return;
+      }
+      
+      // Handle diagonal connectors (original functionality)
       // Verify the required circles are active for the selected connector
       if (drawABConnector && (!circleAInnerActive || !circleBInnerActive)) {
         discard;
