@@ -47,6 +47,13 @@ const getWorldPosition = (
   return { x, y };
 };
 
+// Define connector types as constants
+const CONNECTOR_NONE = 0;
+const CONNECTOR_DIAG_TL_BR = 1; // Diagonal \
+const CONNECTOR_DIAG_BL_TR = 2; // Diagonal /
+const CONNECTOR_HORIZ_T = 3;    // Horizontal Top
+const CONNECTOR_HORIZ_B = 4;    // Horizontal Bottom
+
 // === GridScene Component ===
 
 // Dummy object for matrix calculations
@@ -249,6 +256,254 @@ const GridScene = () => {
     }
   }, [activationState, stateTexture]); // Depend on activation state and the texture itself
 
+  // === Feature 8: Connector Interaction ===
+  // Connector intent state - track which connector types are intended for 2x2 cell groups
+  const [intendedConnectors, setIntendedConnectors] = useState<Record<string, number>>({});
+
+  // Helper to get the key for a 2x2 cell group
+  const getCellGroupKey = (cellX: number, cellY: number) => `${cellX},${cellY}`;
+
+  // Helper to get the intended connector for a 2x2 cell group
+  const getIntendedConnector = (cellX: number, cellY: number) => {
+    const key = getCellGroupKey(cellX, cellY);
+    return intendedConnectors[key] || CONNECTOR_NONE;
+  };
+
+  // Handle clicks on the connector plane
+  const handleConnectorClick = useCallback((event: any) => {
+    event.stopPropagation();
+    
+    // Get the click point in world space
+    const clickPoint = event.point;
+    
+    // First, check if the click is on a circle
+    // Determine which grid cell this point is closest to
+    const gridX = Math.round((clickPoint.x - centerOffset.x) / FIXED_SPACING);
+    const gridY = Math.round((clickPoint.y - centerOffset.y) / FIXED_SPACING);
+    
+    // Check if this cell is within grid bounds
+    if (gridX >= 0 && gridX < GRID_WIDTH && gridY >= 0 && gridY < GRID_HEIGHT) {
+      // Calculate the cell center in world space
+      const cellCenter = getWorldPosition(gridY, gridX, GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, centerOffset);
+      
+      // Calculate distance from click to cell center
+      const distFromCenter = Math.sqrt(
+        Math.pow(clickPoint.x - cellCenter.x, 2) + 
+        Math.pow(clickPoint.y - cellCenter.y, 2)
+      );
+      
+      // Check if click is inside the inner circle
+      const currentInnerRadius = BASE_RADIUS_B * visualScale;
+      if (distFromCenter <= currentInnerRadius) {
+        // This is a click on a circle - toggle its activation state
+        const index = getIndex(gridY, gridX, GRID_WIDTH);
+        setActivationState(current => {
+          const newState = new Float32Array(current);
+          newState[index] = newState[index] === 1.0 ? 0.0 : 1.0; // Toggle
+          return newState;
+        });
+        console.log(`Toggling circle at (${gridX},${gridY})`);
+        return; // Exit early - we've handled this as a circle click
+      }
+    }
+    
+    // If we get here, the click wasn't on a circle, so treat it as a connector click
+    // Determine which grid cell (bottom-left of a 2x2 group) this point is closest to
+    const groupX = Math.floor((clickPoint.x - centerOffset.x) / FIXED_SPACING);
+    const groupY = Math.floor((clickPoint.y - centerOffset.y) / FIXED_SPACING);
+    
+    // Get the indices of the four cells in the 2x2 group
+    const blIndex = getIndex(groupY, groupX, GRID_WIDTH);
+    const brIndex = getIndex(groupY, groupX + 1, GRID_WIDTH);
+    const tlIndex = getIndex(groupY + 1, groupX, GRID_WIDTH);
+    const trIndex = getIndex(groupY + 1, groupX + 1, GRID_WIDTH);
+    
+    // Check which cells are within grid bounds
+    const isValidGroup = 
+      groupX >= 0 && groupX < GRID_WIDTH - 1 && 
+      groupY >= 0 && groupY < GRID_HEIGHT - 1;
+    
+    if (!isValidGroup) return;
+    
+    // Get activation states for the four cells
+    const blActive = activationState[blIndex] === 1.0;
+    const brActive = activationState[brIndex] === 1.0;
+    const tlActive = activationState[tlIndex] === 1.0;
+    const trActive = activationState[trIndex] === 1.0;
+    
+    // Get the world positions of the cell centers
+    const blPos = getWorldPosition(groupY, groupX, GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, centerOffset);
+    const brPos = getWorldPosition(groupY, groupX + 1, GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, centerOffset);
+    const tlPos = getWorldPosition(groupY + 1, groupX, GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, centerOffset);
+    const trPos = getWorldPosition(groupY + 1, groupX + 1, GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, centerOffset);
+    
+    // Calculate the center of the 2x2 group
+    const centerX = (blPos.x + brPos.x + tlPos.x + trPos.x) / 4;
+    const centerY = (blPos.y + brPos.y + tlPos.y + trPos.y) / 4;
+    
+    // Calculate distances from click to each diagonal
+    const distToBLTR = Math.abs((clickPoint.x - blPos.x) * (trPos.y - blPos.y) - (clickPoint.y - blPos.y) * (trPos.x - blPos.x)) / 
+                      Math.sqrt(Math.pow(trPos.x - blPos.x, 2) + Math.pow(trPos.y - blPos.y, 2));
+    
+    const distToTLBR = Math.abs((clickPoint.x - tlPos.x) * (brPos.y - tlPos.y) - (clickPoint.y - tlPos.y) * (brPos.x - tlPos.x)) / 
+                      Math.sqrt(Math.pow(brPos.x - tlPos.x, 2) + Math.pow(brPos.y - tlPos.y, 2));
+    
+    // Determine if click is closer to horizontal or vertical
+    const clickOffsetX = clickPoint.x - centerX;
+    const clickOffsetY = clickPoint.y - centerY;
+    const isHorizontalClick = Math.abs(clickOffsetY) < Math.abs(clickOffsetX);
+    const isTopHalf = clickOffsetY > 0;
+    
+    // Get current intended connector
+    const currentConnector = getIntendedConnector(groupX, groupY);
+    const groupKey = getCellGroupKey(groupX, groupY);
+    
+    let newConnector = CONNECTOR_NONE;
+    
+    // Determine which connector was clicked
+    let clickedType = CONNECTOR_NONE;
+    
+    if (distToBLTR < distToTLBR) {
+      // Closer to BL-TR diagonal (/)
+      if (blActive && trActive) {
+        clickedType = CONNECTOR_DIAG_BL_TR;
+      }
+    } else {
+      // Closer to TL-BR diagonal (\)
+      if (tlActive && brActive) {
+        clickedType = CONNECTOR_DIAG_TL_BR;
+      }
+    }
+    
+    // Horizontal connector logic
+    if (isHorizontalClick) {
+      if (isTopHalf) {
+        // Top horizontal
+        if (tlActive && trActive) {
+          clickedType = CONNECTOR_HORIZ_T;
+        }
+      } else {
+        // Bottom horizontal
+        if (blActive && brActive) {
+          clickedType = CONNECTOR_HORIZ_B;
+        }
+      }
+    }
+    
+    // Toggle logic - if the clicked connector is already active, turn it off
+    // Otherwise, turn off any current connector and turn on the clicked one
+    if (currentConnector === clickedType) {
+      newConnector = CONNECTOR_NONE; // Toggle off
+    } else if (clickedType !== CONNECTOR_NONE) {
+      newConnector = clickedType; // Toggle on new connector
+    }
+    
+    // Update the intended connector
+    setIntendedConnectors(prev => ({
+      ...prev,
+      [groupKey]: newConnector
+    }));
+    
+    console.log(`Clicked cell group (${groupX},${groupY}), setting connector to ${newConnector}`);
+    
+  }, [GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, centerOffset, activationState, intendedConnectors, visualScale]);
+
+  // Reset connector intent when a circle is deactivated
+  useEffect(() => {
+    // Check all cell groups
+    const newIntendedConnectors = { ...intendedConnectors };
+    let hasChanges = false;
+    
+    for (const key in intendedConnectors) {
+      const connector = intendedConnectors[key];
+      if (connector === CONNECTOR_NONE) continue;
+      
+      // Parse x,y from key
+      const [x, y] = key.split(',').map(Number);
+      
+      // Get the indices of the four cells
+      const blIndex = getIndex(y, x, GRID_WIDTH);
+      const brIndex = getIndex(y, x + 1, GRID_WIDTH);
+      const tlIndex = getIndex(y + 1, x, GRID_WIDTH);
+      const trIndex = getIndex(y + 1, x + 1, GRID_WIDTH);
+      
+      // Get activation states
+      const blActive = activationState[blIndex] === 1.0;
+      const brActive = activationState[brIndex] === 1.0;
+      const tlActive = activationState[tlIndex] === 1.0;
+      const trActive = activationState[trIndex] === 1.0;
+      
+      // Check if the connector is still valid
+      let isValid = true;
+      
+      switch (connector) {
+        case CONNECTOR_DIAG_TL_BR:
+          isValid = tlActive && brActive;
+          break;
+        case CONNECTOR_DIAG_BL_TR:
+          isValid = blActive && trActive;
+          break;
+        case CONNECTOR_HORIZ_T:
+          isValid = tlActive && trActive;
+          break;
+        case CONNECTOR_HORIZ_B:
+          isValid = blActive && brActive;
+          break;
+      }
+      
+      if (!isValid) {
+        newIntendedConnectors[key] = CONNECTOR_NONE;
+        hasChanges = true;
+      }
+    }
+    
+    if (hasChanges) {
+      setIntendedConnectors(newIntendedConnectors);
+    }
+  }, [activationState, GRID_WIDTH, intendedConnectors]);
+
+  // Create a data texture for intended connectors
+  const intendedConnectorTexture = useMemo(() => {
+    console.log(`Creating intended connector texture: ${GRID_WIDTH-1}x${GRID_HEIGHT-1}`);
+    
+    // Texture has one pixel per 2x2 cell group (grid cells minus 1 in each dimension)
+    const width = Math.max(1, GRID_WIDTH - 1);
+    const height = Math.max(1, GRID_HEIGHT - 1);
+    
+    const texture = new THREE.DataTexture(
+      new Float32Array(width * height).fill(0.0),
+      width,
+      height,
+      THREE.RedFormat,
+      THREE.FloatType
+    );
+    
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.needsUpdate = true;
+    
+    return texture;
+  }, [GRID_WIDTH, GRID_HEIGHT]);
+  
+  // Update the intended connector texture when state changes
+  useEffect(() => {
+    const width = Math.max(1, GRID_WIDTH - 1);
+    const data = new Float32Array(width * Math.max(1, GRID_HEIGHT - 1));
+    
+    for (let y = 0; y < GRID_HEIGHT - 1; y++) {
+      for (let x = 0; x < GRID_WIDTH - 1; x++) {
+        const index = y * width + x;
+        const connector = getIntendedConnector(x, y);
+        data[index] = connector;
+      }
+    }
+    
+    if (intendedConnectorTexture && data.length === intendedConnectorTexture.image.data.length) {
+      intendedConnectorTexture.image.data.set(data);
+      intendedConnectorTexture.needsUpdate = true;
+    }
+  }, [intendedConnectors, GRID_WIDTH, GRID_HEIGHT, intendedConnectorTexture]);
+
   // Memoize the geometry props to avoid unnecessary re-creations
   // const instanceGeometryArgs = useMemo(() => [1, 1], []); // Removed memoization causing TS error
 
@@ -262,7 +517,7 @@ const GridScene = () => {
         args={[undefined, undefined, TOTAL_CIRCLES]}
         key={`circles-${TOTAL_CIRCLES}`}
         onClick={handleCircleClick} // Attach click handler
-        position={[0, 0, 0.1]} 
+        position={[0, 0, -0.1]} // Position circles behind connectors
       >
         {/* Pass args directly to fix TypeScript error */}
         <planeGeometry args={[1, 1]}> 
@@ -283,8 +538,9 @@ const GridScene = () => {
 
       {/* Connector Plane (Feature 6 & 7) */}
       <mesh
-        position={[0, 0, -0.1]} // Position behind circles
+        position={[0, 0, 0.1]} // Position connectors in front of circles
         key={`connector-plane-${GRID_WIDTH}-${GRID_HEIGHT}-${visualScale}`}
+        onClick={handleConnectorClick} // Add click handler for connector interaction
       >
         <planeGeometry args={[planeWidth, planeHeight]} />
         <connectorMaterial 
@@ -296,11 +552,13 @@ const GridScene = () => {
           u_stateTexture={stateTexture} 
           u_gridDimensions={[GRID_WIDTH, GRID_HEIGHT]}
           u_textureResolution={[GRID_WIDTH, GRID_HEIGHT]} 
-          u_radiusA={BASE_RADIUS_A} // Pass base outer radius (shader works relative to spacing=1)
-          u_radiusB={BASE_RADIUS_B} // Pass base inner radius (shader works relative to spacing=1)
-          u_gridSpacing={visualScale} // Pass current spacing (world units per cell)
-          u_centerOffset={[centerOffset.x, centerOffset.y]} // Pass the center offset for world space calculation
-          u_planeSize={[planeWidth, planeHeight]} // Pass plane dimensions for world space calculation
+          u_radiusA={BASE_RADIUS_A}
+          u_radiusB={BASE_RADIUS_B}
+          u_gridSpacing={visualScale}
+          u_centerOffset={[centerOffset.x, centerOffset.y]}
+          u_planeSize={[planeWidth, planeHeight]}
+          // New uniform for connector intent
+          u_intendedConnectorTexture={intendedConnectorTexture}
         />
       </mesh>
 
