@@ -7,6 +7,8 @@ import { extend } from '@react-three/fiber';
 const BASE_GRID_SPACING = 1.0;
 const BASE_RADIUS_A = 0.5; // Outer radius relative to spacing=1
 const BASE_RADIUS_B = 0.4; // Inner radius relative to spacing=1
+// Fixed spacing is BASE_RADIUS_A + BASE_RADIUS_B = 0.9
+const FIXED_SPACING = BASE_RADIUS_A + BASE_RADIUS_B;
 
 // Vertex shader: Pass UVs
 const vertexShader = /*glsl*/ `
@@ -17,198 +19,166 @@ const vertexShader = /*glsl*/ `
   }
 `;
 
-// Fragment shader: Draw connectors based on state texture and SDFs
+// Fragment shader: Updated to use world space coordinates
 const fragmentShader = /*glsl*/ `
   uniform sampler2D u_stateTexture;
   uniform vec2 u_gridDimensions;    // Grid size (width, height) in cells
   uniform vec2 u_textureResolution; // Texture size (width, height) in pixels
-  uniform float u_radiusA;          // Outer radius (relative to cell spacing = 1.0)
-  uniform float u_radiusB;          // Inner radius (relative to cell spacing = 1.0)
-  uniform float u_gridSpacing;      // World space size of one grid cell
+  uniform float u_radiusA;          // Outer radius (base value)
+  uniform float u_radiusB;          // Inner radius (base value)
+  uniform float u_gridSpacing;      // Visual scale factor
+  // New uniforms for world space calculations
+  uniform vec2 u_centerOffset;      // World offset for centering grid
+  uniform vec2 u_planeSize;         // World size of connector plane
 
   varying vec2 vUv;
 
   // --- SDF Helper Functions ---
   float sdCircle(vec2 p, float r) {
-      return length(p) - r;
+    return length(p) - r;
   }
 
-  // SDF for an axis-aligned box centered at origin
   float sdBox(vec2 p, vec2 b) {
-      vec2 d = abs(p) - b;
-      return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+    vec2 d = abs(p) - b;
+    return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
   }
 
-  // SDF for a line segment (used for horizontal connector)
-  // Note: Simpler to use a box for thick horizontal line
   float sdSegment(vec2 p, vec2 a, vec2 b) {
-      vec2 pa = p - a, ba = b - a;
-      float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-      return length(pa - ba * h);
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
   }
 
-  // SDF for a capsule (segment with thickness)
-  float sdCapsule( vec2 p, vec2 a, vec2 b, float r ){
-    vec2 pa = p-a, ba = b-a;
-    float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
-    return length( pa - ba*h ) - r;
+  float sdCapsule(vec2 p, vec2 a, vec2 b, float r) {
+    return sdSegment(p, a, b) - r;
   }
 
-  float opUnion( float d1, float d2 ) { return min(d1, d2); }
-  float opIntersection( float d1, float d2 ) { return max(d1, d2); }
-  float opSubtraction( float d1, float d2 ) { return max(d1, -d2); }
+  float opUnion(float d1, float d2) { return min(d1, d2); }
+  float opIntersection(float d1, float d2) { return max(d1, d2); }
+  float opSubtraction(float d1, float d2) { return max(d1, -d2); }
 
   // --- State Sampling Helper ---
   float getState(ivec2 cellCoord) {
-      // Clamp coordinates to valid texture range
-      ivec2 clampedCoord = clamp(cellCoord, ivec2(0), ivec2(u_textureResolution) - ivec2(1));
-      if (cellCoord != clampedCoord) return 0.0; // Return inactive if out of bounds
-      return texelFetch(u_stateTexture, clampedCoord, 0).r;
+    ivec2 clampedCoord = clamp(cellCoord, ivec2(0), ivec2(u_textureResolution) - ivec2(1));
+    if (cellCoord != clampedCoord) return 0.0;
+    return texelFetch(u_stateTexture, clampedCoord, 0).r;
   }
 
-  // --- Coordinate Helpers ---
-  // Get grid-space center of a cell (cell units, e.g., (0.5, 0.5), (1.5, 0.5), ...)
-  vec2 getCellCenter(ivec2 cell) {
-      return vec2(cell) + vec2(0.5); 
+  // --- Get Cell Center in World Space ---
+  vec2 getCellWorldCenter(ivec2 cell) {
+    float worldX = float(cell.x) * ${FIXED_SPACING} + u_centerOffset.x;
+    float worldY = float(cell.y) * ${FIXED_SPACING} + u_centerOffset.y;
+    return vec2(worldX, worldY);
   }
 
   void main() {
-    // Fragment position in continuous grid coordinates (origin BL, e.g., 0.0 to GRID_WIDTH)
-    // Note: Plane origin is center, UVs are [0,1]. Need to map UV to grid coords.
-    // Plane size is planeWidth = GRID_WIDTH * spacing, planeHeight = GRID_HEIGHT * spacing
-    // World pos x = (uv.x - 0.5) * planeWidth
-    // World pos y = (uv.y - 0.5) * planeHeight
-    // Grid coord x = world_x / spacing - centerOffset.x / spacing + 0.5 ?? No, simpler:
-    // Let's map UV directly to grid space [0, GRID_WIDTH] x [0, GRID_HEIGHT]
-    vec2 gridCoord = vUv * u_gridDimensions;
+    // Calculate fragment's world position
+    vec2 planeOrigin = -u_planeSize * 0.5; // Assuming plane is centered at (0,0)
+    vec2 fragWorldPos = planeOrigin + vUv * u_planeSize;
     
-    // Integer coordinates of the bottom-left cell this fragment might influence
-    ivec2 cell_bl = ivec2(floor(gridCoord - vec2(0.5))); // Offset by 0.5 to center influence
-
-    // Define the 4 cells involved in potential connectors around this point
+    // Determine which cell this fragment is in (find nearest cell)
+    vec2 gridCoord = (fragWorldPos - u_centerOffset) / ${FIXED_SPACING};
+    ivec2 cell_bl = ivec2(floor(gridCoord));
+    
+    // Define neighbor cells
     ivec2 cell_br = cell_bl + ivec2(1, 0);
     ivec2 cell_tl = cell_bl + ivec2(0, 1);
     ivec2 cell_tr = cell_bl + ivec2(1, 1);
 
-    // Get activation states for the 4 cells
+    // Get states for all 4 cells around this fragment
     float state_bl = getState(cell_bl);
     float state_br = getState(cell_br);
     float state_tl = getState(cell_tl);
     float state_tr = getState(cell_tr);
 
-    // If no cells nearby are active, discard early (optimization)
+    // Early exit if no cells are active
     if (state_bl + state_br + state_tl + state_tr < 1.0) {
-        discard;
+      discard;
     }
 
-    // Get grid-space centers of the 4 cells
-    vec2 center_bl = getCellCenter(cell_bl);
-    vec2 center_br = getCellCenter(cell_br);
-    vec2 center_tl = getCellCenter(cell_tl);
-    vec2 center_tr = getCellCenter(cell_tr);
+    // Get cell centers in world space
+    vec2 center_bl = getCellWorldCenter(cell_bl);
+    vec2 center_br = getCellWorldCenter(cell_br);
+    vec2 center_tl = getCellWorldCenter(cell_tl);
+    vec2 center_tr = getCellWorldCenter(cell_tr);
 
-    // Fragment position relative to the center of the 4-cell BBox
-    vec2 bboxCenter = (center_bl + center_tr) * 0.5;
-    vec2 p = gridCoord - bboxCenter; // Position relative to bbox center
+    // Calculate bounding box in world space
+    vec2 bboxCenter = (center_bl + center_br + center_tl + center_tr) * 0.25;
+    vec2 bboxHalfSize = vec2(${FIXED_SPACING} * 0.5);
 
-    float finalSdf = 1e6; // Initialize with a large positive value (outside)
+    // Calculate world-space radii
+    float worldRadiusA = u_radiusA * u_gridSpacing;
+    float worldRadiusB = u_radiusB * u_gridSpacing;
 
-    // --- Calculate potential connector SDFs (all in grid space) ---
+    float finalSdf = 1e6;
 
-    // 1. Horizontal (BL -> BR)
-    if (state_bl == 1.0 && state_br == 1.0) {
-        // Use a capsule (thick line) centered vertically within the cell row
-        float sdf_h1 = sdCapsule(gridCoord, center_bl, center_br, u_radiusB); 
-        // We only want the horizontal part, clip ends
-        // Better: define a box centered between cells
-        vec2 h_box_center = (center_bl + center_br) * 0.5;
-        vec2 h_box_halfsize = vec2(0.5, u_radiusB); // Width is 1 cell, height is inner diameter
-        float sdf_h_bl_br = sdBox(gridCoord - h_box_center, h_box_halfsize);
-        finalSdf = opUnion(finalSdf, sdf_h_bl_br);
-    }
-    
-    // 2. Horizontal (TL -> TR) - Similar logic
-    if (state_tl == 1.0 && state_tr == 1.0) {
-        vec2 h_box_center = (center_tl + center_tr) * 0.5;
-        vec2 h_box_halfsize = vec2(0.5, u_radiusB);
-        float sdf_h_tl_tr = sdBox(gridCoord - h_box_center, h_box_halfsize);
-        finalSdf = opUnion(finalSdf, sdf_h_tl_tr);    
-    }
-
-    // 3. Diagonal \ (TL -> BR)
+    // --- Diagonal \\ (TL to BR) Connector ---
     if (state_tl == 1.0 && state_br == 1.0) {
-        // Constraint a: Outside inner circles of connected TL & BR
-        float sdf_outside_inner_conn = opIntersection(
-            sdCircle(gridCoord - center_tl, u_radiusB), 
-            sdCircle(gridCoord - center_br, u_radiusB)
-        ); // Positive distance means outside both
-        
-        // Constraint b: Outside outer circles of non-connected BL & TR
-        float sdf_outside_outer_non_conn = opIntersection(
-            sdCircle(gridCoord - center_bl, u_radiusA), 
-            sdCircle(gridCoord - center_tr, u_radiusA)
-        );
+      // 1. Create a line/capsule connecting the centers
+      float sdf_capsule_tl_br = sdCapsule(fragWorldPos, center_tl, center_br, worldRadiusB);
+      
+      // 2. Must be outside the outer circles of TR and BL
+      float sdf_outside_tr_outer = sdCircle(fragWorldPos - center_tr, worldRadiusA);
+      float sdf_outside_bl_outer = sdCircle(fragWorldPos - center_bl, worldRadiusA);
+      
+      // 3. Must be inside the bounding box
+      float sdf_inside_bbox = sdBox(fragWorldPos - bboxCenter, bboxHalfSize);
+      
+      // Combine all constraints - valid area is:
+      // Inside capsule AND outside TR outer circle AND outside BL outer circle AND inside bounding box
+      float sdf_diag1 = sdf_capsule_tl_br;
+      sdf_diag1 = max(sdf_diag1, -sdf_outside_tr_outer); // Intersection with "outside TR outer"
+      sdf_diag1 = max(sdf_diag1, -sdf_outside_bl_outer); // Intersection with "outside BL outer"
+      sdf_diag1 = max(sdf_diag1, sdf_inside_bbox);       // Intersection with "inside bbox"
 
-        // Constraint c: Inside bounding box (size 1x1 cell units, centered)
-        float sdf_inside_bbox = sdBox(p, vec2(0.5)); // p is already relative to bbox center
-                                                     // Negative distance means inside
-
-        // Combine constraints: Must satisfy a, b, and c
-        // Valid area = NOT (outside_inner OR outside_outer OR outside_bbox)
-        // SDF: intersection( outside_inner, outside_outer, -sdf_inside_bbox )
-        // We want > 0 for outside inner/outer, and > 0 for inside bbox (-sdf_inside_bbox)
-        float sdf_diag1_constraints = opIntersection(
-            opIntersection(sdf_outside_inner_conn, sdf_outside_outer_non_conn),
-            -sdf_inside_bbox // Negate to make inside positive
-        );
-        
-        // If sdf_diag1_constraints > 0, we are in the valid zone. 
-        // The actual connector shape is implicitly defined by this zone.
-        // We want to fill where this is positive, so use -sdf as the distance field.
-        finalSdf = opUnion(finalSdf, -sdf_diag1_constraints);
+      finalSdf = min(finalSdf, sdf_diag1);
     }
 
-    // 4. Diagonal / (BL -> TR)
+    // --- Diagonal / (BL to TR) Connector ---
     if (state_bl == 1.0 && state_tr == 1.0) {
-        // Constraint a: Outside inner circles of connected BL & TR
-        float sdf_outside_inner_conn = opIntersection(
-            sdCircle(gridCoord - center_bl, u_radiusB), 
-            sdCircle(gridCoord - center_tr, u_radiusB)
-        );
-        
-        // Constraint b: Outside outer circles of non-connected TL & BR
-        float sdf_outside_outer_non_conn = opIntersection(
-            sdCircle(gridCoord - center_tl, u_radiusA), 
-            sdCircle(gridCoord - center_br, u_radiusA)
-        );
+      // 1. Create a line/capsule connecting the centers
+      float sdf_capsule_bl_tr = sdCapsule(fragWorldPos, center_bl, center_tr, worldRadiusB);
+      
+      // 2. Must be outside the outer circles of TL and BR
+      float sdf_outside_tl_outer = sdCircle(fragWorldPos - center_tl, worldRadiusA);
+      float sdf_outside_br_outer = sdCircle(fragWorldPos - center_br, worldRadiusA);
+      
+      // 3. Must be inside the bounding box
+      float sdf_inside_bbox = sdBox(fragWorldPos - bboxCenter, bboxHalfSize);
+      
+      // Combine all constraints
+      float sdf_diag2 = sdf_capsule_bl_tr;
+      sdf_diag2 = max(sdf_diag2, -sdf_outside_tl_outer);
+      sdf_diag2 = max(sdf_diag2, -sdf_outside_br_outer);
+      sdf_diag2 = max(sdf_diag2, sdf_inside_bbox);
 
-        // Constraint c: Inside bounding box (same as above)
-        float sdf_inside_bbox = sdBox(p, vec2(0.5));
-
-        // Combine constraints
-        float sdf_diag2_constraints = opIntersection(
-            opIntersection(sdf_outside_inner_conn, sdf_outside_outer_non_conn),
-            -sdf_inside_bbox
-        );
-        
-        // Union with final SDF
-        finalSdf = opUnion(finalSdf, -sdf_diag2_constraints);
+      finalSdf = min(finalSdf, sdf_diag2);
     }
 
-    // --- Final Output ---
-    // If finalSdf < 0, the fragment is inside a valid connector region
+    // --- Horizontal (BL to BR) Connector ---
+    if (state_bl == 1.0 && state_br == 1.0) {
+      float sdf_h_bottom = sdCapsule(fragWorldPos, center_bl, center_br, worldRadiusB);
+      finalSdf = min(finalSdf, sdf_h_bottom);
+    }
+
+    // --- Horizontal (TL to TR) Connector ---
+    if (state_tl == 1.0 && state_tr == 1.0) {
+      float sdf_h_top = sdCapsule(fragWorldPos, center_tl, center_tr, worldRadiusB);
+      finalSdf = min(finalSdf, sdf_h_top);
+    }
+
+    // --- Final Output with Anti-aliasing ---
     if (finalSdf < 0.0) {
-        // Antialiasing using screen-space derivatives
-        float smoothFactor = fwidth(finalSdf) * 0.8; // Adjust multiplier for desired softness
-        float alpha = smoothstep(smoothFactor, -smoothFactor, finalSdf);
-        
-        if (alpha > 0.0) { // Check alpha after smoothing
-            gl_FragColor = vec4(0.0, 0.0, 0.0, alpha); // Black connector, alpha based on smoothing
-        } else {
-             discard;
-        }
+      float smoothFactor = fwidth(finalSdf) * 0.8;
+      float alpha = smoothstep(smoothFactor, -smoothFactor, finalSdf);
+      
+      if (alpha > 0.01) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, alpha);
+      } else {
+        discard;
+      }
     } else {
-        discard; // Outside all connector regions
+      discard;
     }
   }
 `;
@@ -219,9 +189,12 @@ const ConnectorMaterial = shaderMaterial(
     u_stateTexture: null, 
     u_gridDimensions: new THREE.Vector2(10, 10),
     u_textureResolution: new THREE.Vector2(10, 10),
-    u_radiusA: BASE_RADIUS_A, // Pass base radius relative to spacing=1
-    u_radiusB: BASE_RADIUS_B, // Pass base radius relative to spacing=1
-    u_gridSpacing: BASE_GRID_SPACING, // Pass base spacing
+    u_radiusA: BASE_RADIUS_A,
+    u_radiusB: BASE_RADIUS_B,
+    u_gridSpacing: BASE_GRID_SPACING,
+    // New uniforms for world space calculations
+    u_centerOffset: new THREE.Vector2(0, 0),
+    u_planeSize: new THREE.Vector2(10, 10),
   },
   vertexShader,
   fragmentShader
@@ -240,7 +213,6 @@ declare global {
 }
 
 export default ConnectorMaterial;
-
 // Define constants matching GridScene for defaults (optional, but helps IDE)
 // Moved to top - Removing these commented out versions
 // const BASE_GRID_SPACING = 1.0;

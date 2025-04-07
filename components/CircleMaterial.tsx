@@ -29,26 +29,29 @@ const fragmentShader = /*glsl*/ `
   void main() {
     float dist = distance(vUv, vec2(0.5));
 
+    // Discard if outside the outer circle
     if (dist > u_radiusA) {
-        discard; // Outside outer circle
+        discard;
     }
 
-    if (dist > u_radiusB) {
-        // In the outer ring
-        gl_FragColor = vec4(u_outerColor, 1.0);
-    } else {
-        // In the inner circle - Use activation state
-        if (v_activated == 1.0) {
-            gl_FragColor = vec4(u_innerColorActive, 1.0);
+    // Check activation state first
+    if (v_activated == 1.0) {
+        // If activated, only draw the inner circle (black)
+        if (dist <= u_radiusB) {
+            gl_FragColor = vec4(u_innerColorActive, 1.0); // Solid black inner circle
         } else {
+            discard; // Make outer ring transparent when activated
+        }
+    } else {
+        // Not activated - draw both inner and outer circles
+        if (dist > u_radiusB) {
+            // In the outer ring
+            gl_FragColor = vec4(u_outerColor, 1.0);
+        } else {
+            // In the inner circle - empty/inactive
             gl_FragColor = vec4(u_innerColorEmpty, 1.0);
         }
     }
-
-    // Optional: Make inner empty circle transparent if its color matches background
-    // if (v_activated == 0.0 && u_innerColorEmpty == u_bgColor) {
-    //     if (dist <= u_radiusB) discard;
-    // }
   }
 `;
 

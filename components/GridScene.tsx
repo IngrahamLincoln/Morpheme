@@ -8,9 +8,12 @@ import ConnectorMaterial from './ConnectorMaterial';
 // === Feature 1: Grid Data & Configuration ===
 
 // Constants for base geometry
-const BASE_GRID_SPACING = 1.0;
+const BASE_GRID_SPACING = 1.0; // Keep for reference if needed, but spacing is now fixed
 const BASE_RADIUS_A = 0.5; // Outer radius
 const BASE_RADIUS_B = 0.4; // Inner radius
+
+// Calculate the fixed spacing based on desired overlap
+const FIXED_SPACING = BASE_RADIUS_A + BASE_RADIUS_B; // 0.5 + 0.4 = 0.9
 
 // Helper Functions
 const getIndex = (row: number, col: number, gridWidth: number): number => {
@@ -23,22 +26,23 @@ const getCoords = (index: number, gridWidth: number): { row: number; col: number
   return { row, col };
 };
 
+// Modified to use fixed spacing
 const getCenterOffset = (gridWidth: number, gridHeight: number, spacing: number): THREE.Vector2 => {
   const totalWidth = (gridWidth - 1) * spacing;
   const totalHeight = (gridHeight - 1) * spacing;
   return new THREE.Vector2(-totalWidth / 2, -totalHeight / 2);
 };
 
+// Modified to use fixed spacing
 const getWorldPosition = (
   row: number,
   col: number,
-  gridWidth: number,
+  gridWidth: number, // Keep grid dimensions for offset calculation if needed
   gridHeight: number,
-  spacing: number,
+  spacing: number, // This will be FIXED_SPACING
   centerOffset: THREE.Vector2
 ): { x: number; y: number } => {
   const x = col * spacing + centerOffset.x;
-  // Assuming positive Y is up
   const y = row * spacing + centerOffset.y;
   return { x, y };
 };
@@ -52,48 +56,43 @@ const tempVec = new THREE.Vector3();
 
 const GridScene = () => {
   // Leva controls for grid parameters
-  const { GRID_WIDTH, GRID_HEIGHT, currentGridSpacing } = useControls('Grid', {
+  const { GRID_WIDTH, GRID_HEIGHT, visualScale } = useControls('Grid', {
     GRID_WIDTH: { value: 10, min: 2, max: 100, step: 1 },
     GRID_HEIGHT: { value: 10, min: 2, max: 100, step: 1 },
-    currentGridSpacing: {
-      value: BASE_GRID_SPACING,
+    visualScale: { // Renamed from currentGridSpacing
+      value: 1.0, // Default scale is 1.0
       min: 0.1,
       max: 5,
       step: 0.1,
+      label: 'Visual Scale' // Updated label
     },
   });
 
   // Derived values calculation using useMemo for optimization
   const { 
     TOTAL_CIRCLES, 
-    scaledRadiusA, 
-    scaledRadiusB, 
-    centerOffset,
-    planeWidth,
-    planeHeight
+    centerOffset, // Based on FIXED_SPACING
+    planeWidth,   // Based on FIXED_SPACING
+    planeHeight   // Based on FIXED_SPACING
   } = useMemo(() => {
     const total = GRID_WIDTH * GRID_HEIGHT;
-    const scaleFactor = currentGridSpacing / BASE_GRID_SPACING;
-    const radiusA = BASE_RADIUS_A * scaleFactor;
-    const radiusB = BASE_RADIUS_B * scaleFactor;
-    const offset = getCenterOffset(GRID_WIDTH, GRID_HEIGHT, currentGridSpacing);
-    const width = GRID_WIDTH * currentGridSpacing;
-    const height = GRID_HEIGHT * currentGridSpacing;
+    // Offset and plane dimensions depend on the fixed spacing between centers
+    const offset = getCenterOffset(GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING);
+    // Calculate actual grid extent based on fixed spacing
+    const width = (GRID_WIDTH > 1 ? (GRID_WIDTH - 1) * FIXED_SPACING : 0) + (visualScale * BASE_RADIUS_A * 2); // Add diameter margin
+    const height = (GRID_HEIGHT > 1 ? (GRID_HEIGHT - 1) * FIXED_SPACING : 0) + (visualScale * BASE_RADIUS_A * 2); // Add diameter margin
     
-    // Debug logs (can be removed later)
-    // console.log(`Grid: ${GRID_WIDTH}x${GRID_HEIGHT}, Spacing: ${currentGridSpacing}`);
-    // console.log(`Total Circles: ${total}, Scaled Radii: A=${radiusA.toFixed(2)} B=${radiusB.toFixed(2)}`);
-    // console.log(`Center Offset: x=${offset.x.toFixed(2)}, y=${offset.y.toFixed(2)}`);
+    console.log(`Layout Spacing: ${FIXED_SPACING.toFixed(2)}`);
+    console.log(`Calculated Center Offset: x=${offset.x.toFixed(2)}, y=${offset.y.toFixed(2)}`);
+    console.log(`Calculated Plane Size: w=${width.toFixed(2)}, h=${height.toFixed(2)}`);
 
     return {
       TOTAL_CIRCLES: total,
-      scaledRadiusA: radiusA,
-      scaledRadiusB: radiusB,
       centerOffset: offset,
       planeWidth: width,
       planeHeight: height,
     };
-  }, [GRID_WIDTH, GRID_HEIGHT, currentGridSpacing]);
+  }, [GRID_WIDTH, GRID_HEIGHT, visualScale]); // Depend on grid size and visual scale for plane margin
 
   // Refs for mesh and material
   const meshRef = useRef<THREE.InstancedMesh>(null!);
@@ -133,7 +132,7 @@ const GridScene = () => {
         col,
         GRID_WIDTH,
         GRID_HEIGHT,
-        currentGridSpacing,
+        FIXED_SPACING,
         centerOffset
       );
       dummy.position.set(x, y, 0); // Z=0 for circles
@@ -153,7 +152,7 @@ const GridScene = () => {
 
     // console.log(`Updated ${TOTAL_CIRCLES} instance matrices (position).`);
 
-  }, [GRID_WIDTH, GRID_HEIGHT, currentGridSpacing, TOTAL_CIRCLES, centerOffset]);
+  }, [GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, TOTAL_CIRCLES, centerOffset]);
 
   // Update shader uniforms when scaled radii change
   useEffect(() => {
@@ -165,25 +164,25 @@ const GridScene = () => {
       // Scale the whole instance instead to match spacing
        console.log(`Updated material radii uniforms: A=${BASE_RADIUS_A}, B=${BASE_RADIUS_B}`);
     }
-  }, [scaledRadiusA, scaledRadiusB]); // Depend on scaled radii, though using base for uniform now
+  }, []); // Depend on scaled radii, though using base for uniform now
 
  // Adjust instance scale based on spacing
  useEffect(() => {
   if (!meshRef.current) return;
-  const scale = currentGridSpacing; // Scale instances to match spacing
+  const scale = visualScale; // Use the leva control value for scale
+  console.log(`Updating instance scales to: ${scale.toFixed(2)}`);
   for (let index = 0; index < TOTAL_CIRCLES; index++) {
-      meshRef.current.getMatrixAt(index, dummy.matrix);
-      const position = new THREE.Vector3();
-      const quaternion = new THREE.Quaternion();
-      const scaleVec = new THREE.Vector3();
-      dummy.matrix.decompose(position, quaternion, scaleVec); // Keep existing position/rotation
-      scaleVec.set(scale, scale, 1); // Set new scale
-      dummy.matrix.compose(position, quaternion, scaleVec); // Recompose matrix
-      meshRef.current.setMatrixAt(index, dummy.matrix);
+      meshRef.current.getMatrixAt(index, tempMatrix);
+      const position = tempVec.setFromMatrixPosition(tempMatrix);
+      const quaternion = new THREE.Quaternion().setFromRotationMatrix(tempMatrix);
+      // Update only scale
+      const scaleVec = new THREE.Vector3().set(scale, scale, 1);
+      
+      tempMatrix.compose(position, quaternion, scaleVec);
+      meshRef.current.setMatrixAt(index, tempMatrix);
   }
   meshRef.current.instanceMatrix.needsUpdate = true;
-  console.log(`Updated instance scales to: ${scale.toFixed(2)}`);
-}, [currentGridSpacing, TOTAL_CIRCLES]); // Removed GRID_WIDTH, GRID_HEIGHT dependencies as scale only depends on spacing/count
+}, [visualScale, TOTAL_CIRCLES]); // Depends on scale control and count
 
   // === Feature 4: Circle Interaction ===
   const handleCircleClick = useCallback((event: any) => {
@@ -202,7 +201,7 @@ const GridScene = () => {
 
     // Get the CURRENT world-space inner radius (Base radius * current instance scale)
     // Note: scaledRadiusB is calculated based on spacing, which matches instance scale
-    const currentInnerRadius = scaledRadiusB; 
+    const currentInnerRadius = BASE_RADIUS_B * visualScale; 
 
     // console.log(`Clicked instance ${index}, dist: ${distFromCenter.toFixed(2)}, innerRadius: ${currentInnerRadius.toFixed(2)}`);
 
@@ -221,7 +220,7 @@ const GridScene = () => {
       // }
     }
 
-  }, [meshRef, setActivationState, scaledRadiusB]); // Dependencies for the click handler
+  }, [meshRef, setActivationState, visualScale]); // Dependencies for the click handler
 
   // === Feature 5: State Data Texture ===
   const stateTexture = useMemo(() => {
@@ -284,8 +283,8 @@ const GridScene = () => {
 
       {/* Connector Plane (Feature 6 & 7) */}
       <mesh
-        position={[0, 0, 0]} // Position behind circles
-        key={`connector-plane-${GRID_WIDTH}-${GRID_HEIGHT}-${currentGridSpacing}`}
+        position={[0, 0, -0.1]} // Position behind circles
+        key={`connector-plane-${GRID_WIDTH}-${GRID_HEIGHT}-${visualScale}`}
       >
         <planeGeometry args={[planeWidth, planeHeight]} />
         <connectorMaterial 
@@ -299,7 +298,9 @@ const GridScene = () => {
           u_textureResolution={[GRID_WIDTH, GRID_HEIGHT]} 
           u_radiusA={BASE_RADIUS_A} // Pass base outer radius (shader works relative to spacing=1)
           u_radiusB={BASE_RADIUS_B} // Pass base inner radius (shader works relative to spacing=1)
-          u_gridSpacing={currentGridSpacing} // Pass current spacing (world units per cell)
+          u_gridSpacing={visualScale} // Pass current spacing (world units per cell)
+          u_centerOffset={[centerOffset.x, centerOffset.y]} // Pass the center offset for world space calculation
+          u_planeSize={[planeWidth, planeHeight]} // Pass plane dimensions for world space calculation
         />
       </mesh>
 

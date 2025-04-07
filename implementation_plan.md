@@ -1,6 +1,6 @@
 
 I want to have a 2d xy grid of circles. they could be 10 x 10 or 100 x 100 it shouldnt matter
-at each intersection of the grid there should be two circles one of say .4 radii and one of .5 radii so a little larger. the outer circles overlap on the grid by .1
+at each intersection of the grid there should be two circles one of say .4 radii and one of .5 radii so a little larger. the outer circles overlap on the grid by (outer circle radii - inner circle radii)
 3 the inner circle is going to be "activateable" in that it toggles from empty to solid black.
 the outer circle's purpose is to be a boundary for diagonal connectors between the activated solid inner circles. the code will show this done... but not perfectly.
 there are 3 connector types diagonal \ diagonal / and horizontal. the construction of the diagonal connectors are VERY particularly important. they are made of an area that is a. outside the two inner circles that they connect
