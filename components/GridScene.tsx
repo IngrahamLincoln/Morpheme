@@ -1356,14 +1356,24 @@ const GridScene = () => {
   // Debug function to clear everything
   const clearAll = useCallback(() => {
     console.log("Clearing all state");
-    setActivationState(new Float32Array(TOTAL_CIRCLES).fill(0.0));
+    
+    // Get the CURRENT state at the moment the button is clicked
+    const currentControls = { ...controls }; // Make a fresh copy of the controls object
+    console.log(`Current controls dimensions: ${currentControls.GRID_WIDTH}x${currentControls.GRID_HEIGHT}`);
+    
+    // Calculate the current total circles based on current dimensions
+    const currentTotalCircles = currentControls.GRID_WIDTH * currentControls.GRID_HEIGHT;
+    console.log(`Clearing state for ${currentTotalCircles} circles`);
+    
+    // Create a new activation state with the current total
+    setActivationState(new Float32Array(currentTotalCircles).fill(0.0));
     setIntendedConnectors({});
     setCmdHorizConnectors({});
     
     // Also clear the refs
     intendedConnectorsRef.current = {};
     cmdHorizConnectorsRef.current = {};
-  }, [TOTAL_CIRCLES, setActivationState, setIntendedConnectors, setCmdHorizConnectors]);
+  }, [controls, setActivationState, setIntendedConnectors, setCmdHorizConnectors]);
   
   // Now that we've defined the debug functions, add the debug controls
   useControls('Debug', () => ({
