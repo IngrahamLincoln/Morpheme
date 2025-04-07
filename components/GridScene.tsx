@@ -5,16 +5,17 @@ import { useFrame } from '@react-three/fiber';
 import CircleMaterial from './CircleMaterial';
 import ConnectorMaterial from './ConnectorMaterial';
 import CmdHorizConnectorMaterial from './CmdHorizConnectorMaterial';
+import Stats from 'three/examples/jsm/libs/stats.module';
+import { FIXED_SPACING, BASE_RADIUS_A, BASE_RADIUS_B } from './constants'; // Assuming constants are moved
 
 // === Feature 1: Grid Data & Configuration ===
 
-// Constants for base geometry
-const BASE_GRID_SPACING = 1.0; // Keep for reference if needed, but spacing is now fixed
-const BASE_RADIUS_A = 0.5; // Outer radius
-const BASE_RADIUS_B = 0.4; // Inner radius
+// Constants for base geometry - REMOVED, now imported
+// const BASE_RADIUS_A = 0.5; // Outer radius
+// const BASE_RADIUS_B = 0.4; // Inner radius
+// const FIXED_SPACING = BASE_RADIUS_A + BASE_RADIUS_B; // 0.9
 
-// Calculate the fixed spacing based on desired overlap
-const FIXED_SPACING = BASE_RADIUS_A + BASE_RADIUS_B; // 0.5 + 0.4 = 0.9
+const BASE_GRID_SPACING = 1.0; // Keep for reference if needed
 
 // Helper Functions
 const getIndex = (row: number, col: number, gridWidth: number): number => {
@@ -79,6 +80,14 @@ const GridScene = () => {
       label: 'Visual Scale' // Updated label
     },
   });
+
+  // Add dynamic instance management
+  const instanceCount = useMemo(() => {
+    // Only create as many instances as visible in viewport
+    const visibleWidth = Math.min(GRID_WIDTH, Math.ceil(window.innerWidth / (FIXED_SPACING * visualScale)) + 2);
+    const visibleHeight = Math.min(GRID_HEIGHT, Math.ceil(window.innerHeight / (FIXED_SPACING * visualScale)) + 2);
+    return visibleWidth * visibleHeight;
+  }, [GRID_WIDTH, GRID_HEIGHT, visualScale]);
 
   // Derived values calculation using useMemo for optimization
   const { 
@@ -722,6 +731,51 @@ const GridScene = () => {
   // Ref for the new material
   const cmdHorizMaterialRef = useRef<any>(null);
 
+  useEffect(() => {
+    if (!meshRef.current) return;
+    
+    // Enable frustum culling
+    meshRef.current.frustumCulled = true;
+    
+    // Update bounding sphere for better culling
+    if (meshRef.current.geometry) {
+      meshRef.current.geometry.computeBoundingSphere();
+      if (meshRef.current.geometry.boundingSphere) {
+        meshRef.current.geometry.boundingSphere.radius *= Math.max(visualScale, 1.0);
+      }
+    }
+  }, [visualScale]);
+
+  // --- Performance Monitoring Setup ---
+  const statsRef = useRef<Stats | null>(null); // Use useRef to hold the instance
+
+  useEffect(() => {
+    // Initialize Stats.js on component mount
+    statsRef.current = new Stats();
+    statsRef.current.showPanel(0); // 0: fps, 1: ms, 2: mb, 3+: custom
+    document.body.appendChild(statsRef.current.dom);
+
+    // Cleanup function to remove Stats.js on unmount
+    return () => {
+      if (statsRef.current) {
+        document.body.removeChild(statsRef.current.dom);
+        statsRef.current = null; // Clear the ref
+      }
+    };
+  }, []); // Empty dependency array ensures this runs only once on mount/unmount
+
+  // Frame update logic (including stats)
+  useFrame((state) => {
+    if (statsRef.current) { // Check if statsRef.current exists
+      statsRef.current.update(); // Update FPS counter
+    }
+
+    // Optional: Log frame time periodically
+    // if (state.clock.elapsedTime % 5 < state.clock.getDelta()) { // Check every 5s
+    //   console.log('Frame time:', state.clock.getDelta() * 1000, 'ms');
+    // }
+  });
+
   return (
     <group>
       <instancedMesh 
@@ -795,6 +849,7 @@ const GridScene = () => {
           u_radiusA={BASE_RADIUS_A}                     // Base radii
           u_radiusB={BASE_RADIUS_B}
           u_gridSpacing={visualScale}                   // Current visual scale
+          u_fixedSpacing={FIXED_SPACING}                // Pass the base fixed spacing
           u_centerOffset={[centerOffset.x, centerOffset.y]} // Grid offset
           u_planeSize={[planeWidth, planeHeight]}       // Plane dimensions
         />

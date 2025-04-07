@@ -14,9 +14,7 @@ const FIXED_SPACING = BASE_RADIUS_A + BASE_RADIUS_B;
 const CONNECTOR_NONE = 0;
 const CONNECTOR_DIAG_TL_BR = 1; // Diagonal \
 const CONNECTOR_DIAG_BL_TR = 2; // Diagonal /
-const CONNECTOR_HORIZ_T = 3;    // Horizontal Top
-const CONNECTOR_HORIZ_B = 4;    // Horizontal Bottom
-const CONNECTOR_HORIZ_CMD = 5;  // New: Cmd-click horizontal connector
+const CONNECTOR_HORIZ_CMD = 3;  // New: Cmd-click horizontal connector
 
 // Vertex shader: Pass UVs
 const vertexShader = /*glsl*/ `
