@@ -109,6 +109,11 @@ const GridScene = () => {
     'Save/Load': folder({
         saveState: button(() => { 
           console.log("Save button clicked");
+          
+          // Get the CURRENT state at the moment the button is clicked
+          const currentControls = { ...controls }; // Make a fresh copy of the controls object
+          console.log(`Current controls dimensions: ${currentControls.GRID_WIDTH}x${currentControls.GRID_HEIGHT}`);
+          
           // Get the current activation state directly from the buffer attribute
           let currentActivation: Float32Array;
           if (activationAttributeRef.current && activationAttributeRef.current.array) {
@@ -123,16 +128,19 @@ const GridScene = () => {
           const currentIntendedConnectors = JSON.parse(JSON.stringify(intendedConnectorsRef.current || {}));
           const currentCmdHorizConnectors = JSON.parse(JSON.stringify(cmdHorizConnectorsRef.current || {}));
           
-          // Debug current state before save
-          console.log("Current intended connectors from button handler:", currentIntendedConnectors);
-          console.log("Keys in intended connectors:", Object.keys(currentIntendedConnectors));
-          console.log("Active intended connectors:", Object.entries(currentIntendedConnectors).filter(([_, v]) => v !== CONNECTOR_NONE));
+          console.log("Ref values for connectors:", {
+            intended: currentIntendedConnectors,
+            cmdHoriz: currentCmdHorizConnectors
+          });
           
-          console.log("Current cmd horiz connectors from button handler:", currentCmdHorizConnectors);
-          console.log("Active cmd horiz connectors:", Object.entries(currentCmdHorizConnectors).filter(([_, v]) => v === 1));
-          
-          // Save the state using direct values
-          saveGridStateWithDirectValues(currentActivation, currentIntendedConnectors, currentCmdHorizConnectors);
+          // Save using direct values with current dimensions
+          saveGridStateWithDirectValues(
+            currentActivation,
+            currentIntendedConnectors,
+            currentCmdHorizConnectors,
+            currentControls.GRID_WIDTH,
+            currentControls.GRID_HEIGHT
+          );
         }),
         loadState: button(() => { 
           console.log("Load requested");
@@ -261,11 +269,7 @@ const GridScene = () => {
           }
         })
     })
-    // Debug controls will be added later with another useControls call
-  }), {
-      // Optional dependency array if controls depend on external state/props
-      // For this case, it seems fine without, but keep in mind for complex scenarios
-  });
+  }));
 
   // Derived values calculation - use 'controls' now
   const { TOTAL_CIRCLES, centerOffset, planeWidth, planeHeight } = useMemo(() => {
@@ -1011,16 +1015,14 @@ const GridScene = () => {
   const saveGridStateWithDirectValues = useCallback((
     currentActivation: Float32Array,
     directIntendedConnectors: Record<string, number>,
-    directCmdHorizConnectors: Record<string, number>
+    directCmdHorizConnectors: Record<string, number>,
+    gridWidth: number,
+    gridHeight: number
   ) => {
     console.log("========== SAVE DIAGNOSTICS START ==========");
     console.log("Starting direct save grid state with data:");
     
-    // Explicitly use the current control values for grid width and height
-    const currentGridWidth = controls.GRID_WIDTH;
-    const currentGridHeight = controls.GRID_HEIGHT;
-    
-    console.log(`Current grid dimensions: ${currentGridWidth} x ${currentGridHeight}`);
+    console.log(`Current grid dimensions: ${gridWidth} x ${gridHeight}`);
     
     // Log the state details
     console.log("- Current activation state has length:", currentActivation.length);
@@ -1054,11 +1056,25 @@ const GridScene = () => {
     
     // Find all active nodes
     const nodes: GridNode[] = [];
+    // Ensure loop uses the correct length based on actual activation array,
+    // but coordinate calculation uses passed dimensions
+    const expectedLength = gridWidth * gridHeight;
+    if (currentActivation.length !== expectedLength) {
+        console.warn(`Activation array length (${currentActivation.length}) doesn't match expected (${expectedLength}) based on passed dimensions! Using array length for loop, but coordinates might be wrong.`);
+    }
+    
     for (let i = 0; i < currentActivation.length; i++) {
       if (currentActivation[i] === 1.0) {
-        const { row: y, col: x } = getCoords(i, currentGridWidth);
-        nodes.push({ x, y });
-        console.log(`Found active node at (${x}, ${y})`);
+        // Use passed gridWidth for coordinate calculation
+        const row = Math.floor(i / gridWidth); 
+        const col = i % gridWidth;
+        // Add bounds check just in case activation array length mismatches
+        if (col >= 0 && col < gridWidth && row >= 0 && row < gridHeight) {
+          nodes.push({ x: col, y: row });
+          console.log(`Found active node at (${col}, ${row})`);
+        } else {
+          console.warn(`Calculated node coords (${col}, ${row}) for index ${i} are out of bounds for passed dimensions ${gridWidth}x${gridHeight}. Skipping.`);
+        }
       }
     }
     console.log(`Total active nodes found: ${nodes.length}`);
@@ -1068,68 +1084,81 @@ const GridScene = () => {
     
     // Process intended connectors (diagonals, etc.)
     console.log("Processing intended connectors...");
-    // Need to manually iterate through all possible connector positions since state might not contain all keys
-    for (let y = 0; y < currentGridHeight - 1; y++) {
-      for (let x = 0; x < currentGridWidth - 1; x++) {
-        const key = getCellGroupKey(x, y);
-        // console.log(`Checking position (${x},${y}) with key ${key}`);
-        
-        const type = intendedConnectorsCopy[key];
-        if (type === undefined || type === CONNECTOR_NONE) {
-          continue;
-        }
-        
-        console.log(`Found connector at (${x},${y}) with key ${key}, type=${type}`);
-        
-        // Map the numeric connector type to the string type for the JSON
-        let edgeType: GridEdge['type'] | null = null;
-        switch (type) {
-          case CONNECTOR_DIAG_TL_BR: 
-            edgeType = 'diag_tl_br'; 
-            console.log(`Converting CONNECTOR_DIAG_TL_BR (${CONNECTOR_DIAG_TL_BR}) to 'diag_tl_br'`);
-            break;
-          case CONNECTOR_DIAG_BL_TR: 
-            edgeType = 'diag_bl_tr'; 
-            console.log(`Converting CONNECTOR_DIAG_BL_TR (${CONNECTOR_DIAG_BL_TR}) to 'diag_bl_tr'`);
-            break;
-          case CONNECTOR_HORIZ_T: 
-            edgeType = 'horiz_t'; 
-            console.log(`Converting CONNECTOR_HORIZ_T (${CONNECTOR_HORIZ_T}) to 'horiz_t'`);
-            break;
-          case CONNECTOR_HORIZ_B: 
-            edgeType = 'horiz_b'; 
-            console.log(`Converting CONNECTOR_HORIZ_B (${CONNECTOR_HORIZ_B}) to 'horiz_b'`);
-            break;
-          default:
-            console.warn(`Unknown connector type ignored: ${type}`);
-        }
-        
-        if (edgeType) {
-          edges.push({ type: edgeType, x, y });
-          console.log(`Added ${edgeType} connector at (${x}, ${y}) to edges array`);
-        }
+    // Instead of iterating through all positions, directly iterate over the keys in the connectors object
+    for (const key of Object.keys(intendedConnectorsCopy)) {
+      const type = intendedConnectorsCopy[key];
+      if (type === undefined || type === CONNECTOR_NONE) {
+        continue;
+      }
+      
+      // Extract x,y from the key (which is in format "x,y")
+      const [x, y] = key.split(',').map(Number);
+      
+      // Check if extracted coordinates are valid for the current grid dimensions
+      if (x < 0 || x >= gridWidth - 1 || y < 0 || y >= gridHeight - 1) {
+        console.warn(`Connector at (${x},${y}) is out of bounds for current grid size (${gridWidth}x${gridHeight}), skipping.`);
+        continue;
+      }
+      
+      console.log(`Found connector at (${x},${y}) with key ${key}, type=${type}`);
+      
+      // Map the numeric connector type to the string type for the JSON
+      let edgeType: GridEdge['type'] | null = null;
+      switch (type) {
+        case CONNECTOR_DIAG_TL_BR: 
+          edgeType = 'diag_tl_br'; 
+          console.log(`Converting CONNECTOR_DIAG_TL_BR (${CONNECTOR_DIAG_TL_BR}) to 'diag_tl_br'`);
+          break;
+        case CONNECTOR_DIAG_BL_TR: 
+          edgeType = 'diag_bl_tr'; 
+          console.log(`Converting CONNECTOR_DIAG_BL_TR (${CONNECTOR_DIAG_BL_TR}) to 'diag_bl_tr'`);
+          break;
+        case CONNECTOR_HORIZ_T: 
+          edgeType = 'horiz_t'; 
+          console.log(`Converting CONNECTOR_HORIZ_T (${CONNECTOR_HORIZ_T}) to 'horiz_t'`);
+          break;
+        case CONNECTOR_HORIZ_B: 
+          edgeType = 'horiz_b'; 
+          console.log(`Converting CONNECTOR_HORIZ_B (${CONNECTOR_HORIZ_B}) to 'horiz_b'`);
+          break;
+        default:
+          console.warn(`Unknown connector type ignored: ${type}`);
+      }
+      
+      if (edgeType) {
+        edges.push({ type: edgeType, x, y });
+        console.log(`Added ${edgeType} connector at (${x}, ${y}) to edges array`);
       }
     }
 
     // Process cmd-horizontal connectors
     console.log("Processing cmd-horizontal connectors...");
-    for (let y = 0; y < currentGridHeight; y++) {
-      for (let x = 0; x < currentGridWidth - 1; x++) {
-        const key = getHorizCmdConnectorKey(x, y);
-        const value = cmdHorizConnectorsCopy[key];
-        if (value === 1) {
-          edges.push({ type: 'cmd_horiz', x, y });
-          console.log(`Added cmd_horiz connector at (${x}, ${y}) to edges array`);
-        }
+    // Instead of iterating through all positions, directly iterate over the keys in the cmdHorizConnectors object
+    for (const key of Object.keys(cmdHorizConnectorsCopy)) {
+      const value = cmdHorizConnectorsCopy[key];
+      if (value !== 1) {
+        continue;
       }
+      
+      // Extract x,y from the key (format is "hcmd:x,y")
+      const [x, y] = key.substring(5).split(',').map(Number);
+      
+      // Check if extracted coordinates are valid for the current grid dimensions
+      if (x < 0 || x >= gridWidth - 1 || y < 0 || y >= gridHeight) {
+        console.warn(`CMD-horiz connector at (${x},${y}) is out of bounds for current grid size (${gridWidth}x${gridHeight}), skipping.`);
+        continue;
+      }
+      
+      edges.push({ type: 'cmd_horiz', x, y });
+      console.log(`Added cmd_horiz connector at (${x}, ${y}) to edges array`);
     }
     
     console.log(`Total edges found: ${edges.length}`);
 
     // Create the final JSON data structure
     const data: AdjacencyListData = {
-      gridWidth: currentGridWidth,
-      gridHeight: currentGridHeight,
+      gridWidth,
+      gridHeight,
       nodes,
       edges,
     };
@@ -1144,12 +1173,12 @@ const GridScene = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `grid_state_${currentGridWidth}x${currentGridHeight}.json`;
+    a.download = `grid_state_${gridWidth}x${gridHeight}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [controls.GRID_WIDTH, controls.GRID_HEIGHT]);
+  }, []);
 
   // --- Save Grid State Function ---
   const saveGridState = useCallback(() => {
@@ -1179,9 +1208,9 @@ const GridScene = () => {
     console.log("Active cmd horiz connectors:", Object.entries(currentCmdHorizConnectors).filter(([_, v]) => v === 1));
 
     console.log("Using direct save method to ensure up-to-date state capture");
-    saveGridStateWithDirectValues(currentActivation, currentIntendedConnectors, currentCmdHorizConnectors);
+    saveGridStateWithDirectValues(currentActivation, currentIntendedConnectors, currentCmdHorizConnectors, controls.GRID_WIDTH, controls.GRID_HEIGHT);
     
-  }, [controls.GRID_WIDTH, controls.GRID_HEIGHT, activationState, activationAttributeRef]);
+  }, [controls, activationState, activationAttributeRef]);
 
   // Debug function to create a test pattern similar to what's in the image
   const createTestPattern = useCallback(() => {
@@ -1285,13 +1314,44 @@ const GridScene = () => {
     setTimeout(() => {
       console.log("========== AUTO-SAVE TEST PATTERN START ==========");
       console.log("Auto-saving test pattern with direct reference to new states...");
-      // Call a modified version of saveGridState that uses the new connector states directly
-      saveGridStateWithDirectValues(newActivationState, newIntendedConnectors, newCmdHorizConnectors);
+      
+      // Get the CURRENT state at the moment of auto-save
+      const currentControls = { ...controls }; // Make a fresh copy of the controls object
+      console.log(`Current controls dimensions: ${currentControls.GRID_WIDTH}x${currentControls.GRID_HEIGHT}`);
+      
+      // Get the current activation state directly from the buffer attribute
+      let currentActivation: Float32Array;
+      if (activationAttributeRef.current && activationAttributeRef.current.array) {
+        currentActivation = activationAttributeRef.current.array as Float32Array;
+        console.log("- Using activation state from buffer attribute");
+      } else {
+        currentActivation = activationState;
+        console.log("- Using activation state from React state (fallback)");
+      }
+      
+      // Use the ref values which should have the most up-to-date state
+      const currentIntendedConnectors = JSON.parse(JSON.stringify(intendedConnectorsRef.current || {}));
+      const currentCmdHorizConnectors = JSON.parse(JSON.stringify(cmdHorizConnectorsRef.current || {}));
+      
+      console.log("Ref values for connectors:", {
+        intended: currentIntendedConnectors,
+        cmdHoriz: currentCmdHorizConnectors
+      });
+      
+      // Save using direct values with current dimensions
+      saveGridStateWithDirectValues(
+        currentActivation,
+        currentIntendedConnectors,
+        currentCmdHorizConnectors,
+        currentControls.GRID_WIDTH,
+        currentControls.GRID_HEIGHT
+      );
+      
       console.log("========== AUTO-SAVE TEST PATTERN END ==========");
     }, 500); // 500ms delay should be sufficient
     
     console.log("========== TEST PATTERN CREATION END ==========");
-  }, [TOTAL_CIRCLES, controls.GRID_WIDTH, controls.GRID_HEIGHT, setActivationState, setIntendedConnectors, setCmdHorizConnectors, intendedConnectors, cmdHorizConnectors]);
+  }, [TOTAL_CIRCLES, controls, setActivationState, setIntendedConnectors, setCmdHorizConnectors, intendedConnectors, cmdHorizConnectors]);
   
   // Debug function to clear everything
   const clearAll = useCallback(() => {
@@ -1311,10 +1371,20 @@ const GridScene = () => {
     clearAll: button(() => clearAll()),
     directSave: button(() => {
       console.log("Direct save triggered manually");
-      // Use the ref directly to ensure we get the latest state
-      const currentActivation = activationAttributeRef.current 
-        ? activationAttributeRef.current.array as Float32Array 
-        : activationState;
+      
+      // Get the CURRENT state at the moment the button is clicked
+      const currentControls = { ...controls }; // Make a fresh copy of the controls object
+      console.log(`Current controls dimensions: ${currentControls.GRID_WIDTH}x${currentControls.GRID_HEIGHT}`);
+      
+      // Get the current activation state directly from the buffer attribute
+      let currentActivation: Float32Array;
+      if (activationAttributeRef.current && activationAttributeRef.current.array) {
+        currentActivation = activationAttributeRef.current.array as Float32Array;
+        console.log("- Using activation state from buffer attribute");
+      } else {
+        currentActivation = activationState;
+        console.log("- Using activation state from React state (fallback)");
+      }
       
       // Use the ref values which should have the most up-to-date state
       const currentIntendedConnectors = JSON.parse(JSON.stringify(intendedConnectorsRef.current || {}));
@@ -1325,10 +1395,13 @@ const GridScene = () => {
         cmdHoriz: currentCmdHorizConnectors
       });
       
+      // Save using direct values with current dimensions
       saveGridStateWithDirectValues(
         currentActivation,
         currentIntendedConnectors,
-        currentCmdHorizConnectors
+        currentCmdHorizConnectors,
+        currentControls.GRID_WIDTH,
+        currentControls.GRID_HEIGHT
       );
     })
   }));
