@@ -129,10 +129,28 @@ const GridScene = () => {
   // New: Add horizontal cmd-click connector state
   const [cmdHorizConnectors, setCmdHorizConnectors] = useState<Record<string, number>>({});
 
+  // === Feature 8: Connector Interaction State and Helpers (Moved UP) ===
+  const [intendedConnectors, setIntendedConnectors] = useState<Record<string, number>>({});
+
+  // Helper to get the key for a 2x2 cell group (Moved UP)
+  const getCellGroupKey = (cellX: number, cellY: number) => `${cellX},${cellY}`;
+
+  // Helper to get the intended connector for a 2x2 cell group (Moved UP)
+  const getIntendedConnector = (cellX: number, cellY: number) => {
+    // Check bounds first
+    if (cellX < 0 || cellX >= GRID_WIDTH - 1 || cellY < 0 || cellY >= GRID_HEIGHT - 1) {
+      return CONNECTOR_NONE;
+    }
+    const key = getCellGroupKey(cellX, cellY);
+    return intendedConnectors[key] || CONNECTOR_NONE;
+  };
+
   // State needs to be reset if TOTAL_CIRCLES changes
   useEffect(() => {
     console.log('Resetting activation state due to grid size change');
     setActivationState(new Float32Array(TOTAL_CIRCLES).fill(0.0));
+    setIntendedConnectors({}); // Also reset intended connectors
+    setCmdHorizConnectors({}); // Also reset cmd-horiz connectors
   }, [TOTAL_CIRCLES]);
 
   // Update buffer attribute when state changes
@@ -140,7 +158,7 @@ const GridScene = () => {
     if (activationAttributeRef.current) {
       activationAttributeRef.current.array = activationState;
       activationAttributeRef.current.needsUpdate = true;
-      console.log('Updated activation buffer attribute.');
+      // console.log('Updated activation buffer attribute.'); // Less noisy log
     }
   }, [activationState]);
 
@@ -208,7 +226,7 @@ const GridScene = () => {
   meshRef.current.instanceMatrix.needsUpdate = true;
 }, [visualScale, TOTAL_CIRCLES]); // Depends on scale control and count
 
-  // === Feature 4: Circle Interaction ===
+  // === Feature 4: Circle Interaction (Now uses helpers defined above) ===
   const handleCircleClick = useCallback((event: any) => {
     event.stopPropagation();
     if (event.instanceId === undefined || !meshRef.current) return;
@@ -246,46 +264,52 @@ const GridScene = () => {
       if (event.metaKey || event.ctrlKey) {
         // Check conditions for horizontal connector
         const rightIndex = getIndex(y, x + 1, GRID_WIDTH);
-        const canConnect = x < GRID_WIDTH - 1 && 
-                         activationState[index] === 1.0 && 
-                         activationState[rightIndex] === 1.0;
+        const canConnectBase = x < GRID_WIDTH - 1 && 
+                               activationState[index] === 1.0 && 
+                               activationState[rightIndex] === 1.0;
+
+        // --- NEW: Check for blocking diagonal connectors ---
+        const connectorBelow = getIntendedConnector(x, y - 1);
+        const connectorAdjacent = getIntendedConnector(x, y);
+        const isBlockedByDiagonal = 
+          (connectorBelow === CONNECTOR_DIAG_TL_BR || connectorBelow === CONNECTOR_DIAG_BL_TR) ||
+          (connectorAdjacent === CONNECTOR_DIAG_TL_BR || connectorAdjacent === CONNECTOR_DIAG_BL_TR);
+        // --- End NEW check ---
 
         console.log('Processing cmd-click on circle:', {
           x, y,
           rightIndex,
           leftActive: activationState[index] === 1.0,
           rightActive: x < GRID_WIDTH - 1 ? activationState[rightIndex] === 1.0 : false,
-          canConnect
+          canConnectBase,
+          isBlockedByDiagonal, // Log the blocking status
+          connectorBelow,
+          connectorAdjacent
         });
 
-        if (canConnect) {
+        // Only allow toggle if base conditions met AND not blocked by diagonal
+        if (canConnectBase && !isBlockedByDiagonal) { 
           const connectorKey = getHorizCmdConnectorKey(x, y);
-          console.log('Toggling horizontal connector:', {
-            key: connectorKey,
-            currentValue: cmdHorizConnectors[connectorKey] || 0
-          });
+          console.log('Toggling horizontal connector (allowed):', { key: connectorKey });
           
-          // Toggle the horizontal connector
           setCmdHorizConnectors(prev => {
             const newValue = prev[connectorKey] ? 0 : 1;
-            const newState = {
-              ...prev,
-              [connectorKey]: newValue
-            };
-            console.log('Updated connector state:', {
-              key: connectorKey,
-              newValue,
-              allConnectors: newState
-            });
+            const newState = { ...prev, [connectorKey]: newValue };
+            // console.log('Updated connector state:', { key: connectorKey, newValue, allConnectors: newState }); // Optional detailed log
             return newState;
           });
           
-          return;
+          return; // Exit after handling cmd-click
+        } else {
+           console.log('Cmd-click horizontal connector blocked or base conditions not met.');
         }
+        // If blocked or can't connect, fall through to regular click? 
+        // Or maybe do nothing on cmd-click if blocked? Let's do nothing for now.
+        return; // Explicitly do nothing more if cmd-click was blocked or invalid
       }
 
-      // Regular click behavior (toggle activation)
-      console.log('Toggling circle activation');
+      // Regular click behavior (toggle activation) - only runs if not a handled cmd-click
+      console.log('Toggling circle activation (regular click)');
       setActivationState(current => {
         const newState = new Float32Array(current);
         newState[index] = newState[index] === 1.0 ? 0.0 : 1.0;
@@ -297,7 +321,7 @@ const GridScene = () => {
         return newState;
       });
     }
-  }, [meshRef, setActivationState, GRID_WIDTH, visualScale, setCmdHorizConnectors, cmdHorizConnectors]);
+  }, [meshRef, setActivationState, GRID_WIDTH, visualScale, setCmdHorizConnectors, cmdHorizConnectors, intendedConnectors, GRID_HEIGHT]); // Dependencies are correct now
 
   // === Feature 5: State Data Texture ===
   const stateTexture = useMemo(() => {
@@ -326,20 +350,7 @@ const GridScene = () => {
     }
   }, [activationState, stateTexture]); // Depend on activation state and the texture itself
 
-  // === Feature 8: Connector Interaction ===
-  // Connector intent state - track which connector types are intended for 2x2 cell groups
-  const [intendedConnectors, setIntendedConnectors] = useState<Record<string, number>>({});
-
-  // Helper to get the key for a 2x2 cell group
-  const getCellGroupKey = (cellX: number, cellY: number) => `${cellX},${cellY}`;
-
-  // Helper to get the intended connector for a 2x2 cell group
-  const getIntendedConnector = (cellX: number, cellY: number) => {
-    const key = getCellGroupKey(cellX, cellY);
-    return intendedConnectors[key] || CONNECTOR_NONE;
-  };
-
-  // Handle clicks on the connector plane
+  // === Feature 8: Connector Plane Interaction (Moved DOWN, uses helpers defined above) ===
   const handleConnectorClick = useCallback((event: any) => {
     event.stopPropagation();
     console.log('Connector plane clicked:', {
@@ -377,30 +388,43 @@ const GridScene = () => {
           const rightIndex = getIndex(gridY, gridX + 1, GRID_WIDTH);
           const leftActive = activationState[index] === 1.0;
           const rightActive = activationState[rightIndex] === 1.0;
+          const canConnectBase = leftActive && rightActive;
 
-          console.log('Processing cmd-click:', {
+          // --- NEW: Check for blocking diagonal connectors ---
+          const connectorBelow = getIntendedConnector(gridX, gridY - 1);
+          const connectorAdjacent = getIntendedConnector(gridX, gridY);
+          const isBlockedByDiagonal = 
+            (connectorBelow === CONNECTOR_DIAG_TL_BR || connectorBelow === CONNECTOR_DIAG_BL_TR) ||
+            (connectorAdjacent === CONNECTOR_DIAG_TL_BR || connectorAdjacent === CONNECTOR_DIAG_BL_TR);
+          // --- End NEW check ---
+
+          console.log('Processing cmd-click (via plane on circle):', {
             x: gridX, y: gridY,
-            leftActive,
-            rightActive
+            leftActive, rightActive,
+            canConnectBase, isBlockedByDiagonal,
+            connectorBelow, connectorAdjacent
           });
 
-          // If both circles are active, toggle the connector
-          if (leftActive && rightActive) {
+          // Only allow toggle if base conditions met AND not blocked by diagonal
+          if (canConnectBase && !isBlockedByDiagonal) {
             const connectorKey = getHorizCmdConnectorKey(gridX, gridY);
+            console.log('Toggling cmd-horiz connector (allowed):', { key: connectorKey });
             setCmdHorizConnectors(prev => {
               const newConnectors = { ...prev };
               newConnectors[connectorKey] = prev[connectorKey] ? 0 : 1;
-              console.log('Toggling cmd-horiz connector:', {
-                key: connectorKey,
-                newValue: newConnectors[connectorKey]
-              });
+              // console.log('Toggling cmd-horiz connector:', { key: connectorKey, newValue: newConnectors[connectorKey] }); // Optional detailed log
               return newConnectors;
             });
-            return;
+            return; // Exit after handling cmd-click
+          } else {
+             console.log('Cmd-click horizontal connector blocked or base conditions not met.');
           }
+          // If blocked or can't connect, fall through to regular click? Let's do nothing more.
+          return; // Explicitly do nothing more if cmd-click was blocked or invalid
         }
 
-        // Regular click behavior (toggle activation)
+        // Regular click behavior (toggle activation) - only runs if not a handled cmd-click
+        console.log('Toggling circle activation (regular click on plane)');
         setActivationState(current => {
           const newState = new Float32Array(current);
           newState[index] = newState[index] === 1.0 ? 0.0 : 1.0;
@@ -463,81 +487,74 @@ const GridScene = () => {
     const currentConnector = getIntendedConnector(groupX, groupY);
     const groupKey = getCellGroupKey(groupX, groupY);
     
-    let newConnector = CONNECTOR_NONE;
+    // --- NEW: Check for blocking horizontal connectors ---
+    const hasHorizCmdBelow = cmdHorizConnectors[getHorizCmdConnectorKey(groupX, groupY)] === 1;
+    const hasHorizCmdAbove = cmdHorizConnectors[getHorizCmdConnectorKey(groupX, groupY + 1)] === 1;
+    const isBlockedByHoriz = hasHorizCmdBelow || hasHorizCmdAbove;
+    // --- End NEW Check ---
+
+    let newConnector = CONNECTOR_NONE; // Initialize potential new state
+    let potentialConnectorType = CONNECTOR_NONE; // Store the type determined by click logic
     
     // If clicked in the center and diagonal connectors are available, cycle through them
     if (isCenterClick && hasDiagonalOptions) {
       if (canUseDiagTLBR && canUseDiagBLTR) {
         // Both diagonals are available, cycle through the options: NONE -> TL-BR -> BL-TR -> NONE
         if (currentConnector === CONNECTOR_NONE) {
-          newConnector = CONNECTOR_DIAG_TL_BR;
+          potentialConnectorType = CONNECTOR_DIAG_TL_BR;
         } else if (currentConnector === CONNECTOR_DIAG_TL_BR) {
-          newConnector = CONNECTOR_DIAG_BL_TR;
-        } else {
-          newConnector = CONNECTOR_NONE;
+          potentialConnectorType = CONNECTOR_DIAG_BL_TR;
+        } else { // current was BL_TR
+          potentialConnectorType = CONNECTOR_NONE;
         }
       } else if (canUseDiagTLBR) {
         // Only TL-BR diagonal is available, toggle it
-        newConnector = currentConnector === CONNECTOR_DIAG_TL_BR ? CONNECTOR_NONE : CONNECTOR_DIAG_TL_BR;
-      } else if (canUseDiagBLTR) {
+        potentialConnectorType = currentConnector === CONNECTOR_DIAG_TL_BR ? CONNECTOR_NONE : CONNECTOR_DIAG_TL_BR;
+      } else { // Only canUseDiagBLTR
         // Only BL-TR diagonal is available, toggle it
-        newConnector = currentConnector === CONNECTOR_DIAG_BL_TR ? CONNECTOR_NONE : CONNECTOR_DIAG_BL_TR;
+        potentialConnectorType = currentConnector === CONNECTOR_DIAG_BL_TR ? CONNECTOR_NONE : CONNECTOR_DIAG_BL_TR;
       }
-    } else {
-      // For clicks outside the center, use the original logic
-      // Determine which connector was clicked
+    } else if (!isCenterClick) { // Check non-center clicks only if not a center click
+      // For clicks outside the center, determine which diagonal was clicked (if any)
       let clickedType = CONNECTOR_NONE;
       
       // Calculate distances from click to each diagonal
       const distToBLTR = Math.abs((clickPoint.x - blPos.x) * (trPos.y - blPos.y) - (clickPoint.y - blPos.y) * (trPos.x - blPos.x)) / 
                         Math.sqrt(Math.pow(trPos.x - blPos.x, 2) + Math.pow(trPos.y - blPos.y, 2));
-      
       const distToTLBR = Math.abs((clickPoint.x - tlPos.x) * (brPos.y - tlPos.y) - (clickPoint.y - tlPos.y) * (brPos.x - tlPos.x)) / 
                         Math.sqrt(Math.pow(brPos.x - tlPos.x, 2) + Math.pow(brPos.y - tlPos.y, 2));
-      
-      // Determine if click is closer to horizontal or vertical
-      const clickOffsetX = clickPoint.x - centerX;
-      const clickOffsetY = clickPoint.y - centerY;
-      const isHorizontalClick = Math.abs(clickOffsetY) < Math.abs(clickOffsetX);
-      const isTopHalf = clickOffsetY > 0;
-      
+            
       if (distToBLTR < distToTLBR) {
         // Closer to BL-TR diagonal (/)
-        if (blActive && trActive) {
+        if (canUseDiagBLTR) { // Check if possible
           clickedType = CONNECTOR_DIAG_BL_TR;
         }
       } else {
         // Closer to TL-BR diagonal (\)
-        if (tlActive && brActive) {
+        if (canUseDiagTLBR) { // Check if possible
           clickedType = CONNECTOR_DIAG_TL_BR;
         }
       }
       
-      // Horizontal connector logic
-      if (isHorizontalClick) {
-        if (isTopHalf) {
-          // Top horizontal
-          if (tlActive && trActive) {
-            clickedType = CONNECTOR_HORIZ_T;
-          }
-        } else {
-          // Bottom horizontal
-          if (blActive && brActive) {
-            clickedType = CONNECTOR_HORIZ_B;
-          }
-        }
-      }
-      
       // Toggle logic - if the clicked connector is already active, turn it off
-      // Otherwise, turn off any current connector and turn on the clicked one
+      // Otherwise, turn on the clicked one
       if (currentConnector === clickedType) {
-        newConnector = CONNECTOR_NONE; // Toggle off
+        potentialConnectorType = CONNECTOR_NONE; // Toggle off
       } else if (clickedType !== CONNECTOR_NONE) {
-        newConnector = clickedType; // Toggle on new connector
+        potentialConnectorType = clickedType; // Toggle on new connector
       }
     }
+
+    // --- Apply Blocking Logic ---
+    if (isBlockedByHoriz && (potentialConnectorType === CONNECTOR_DIAG_TL_BR || potentialConnectorType === CONNECTOR_DIAG_BL_TR)) {
+      newConnector = CONNECTOR_NONE; // Force to NONE if blocked by horizontal
+      console.log(`Diagonal connector blocked by existing horizontal connector at group (${groupX},${groupY})`);
+    } else {
+      newConnector = potentialConnectorType; // Otherwise, use the type determined by click logic
+    }
+    // --- End Blocking Logic ---
     
-    // Update the intended connector
+    // Update the intended connector state
     setIntendedConnectors(prev => ({
       ...prev,
       [groupKey]: newConnector
@@ -545,7 +562,7 @@ const GridScene = () => {
     
     console.log(`Clicked cell group (${groupX},${groupY}), setting connector to ${newConnector}`);
     
-  }, [GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, centerOffset, activationState, intendedConnectors, visualScale]);
+  }, [GRID_WIDTH, GRID_HEIGHT, FIXED_SPACING, centerOffset, activationState, intendedConnectors, visualScale, setCmdHorizConnectors, cmdHorizConnectors]); // Dependencies are correct now
 
   // Reset connector intent when a circle is deactivated
   useEffect(() => {

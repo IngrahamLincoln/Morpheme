@@ -18,7 +18,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-use": "^17.4.0",
-    "three": "^0.152.0",
+    "three": "^0.152.2",
     "zustand": "^4.3.9"
   },
   "devDependencies": {
@@ -29,4 +29,4 @@
     "eslint-config-next": "^13.0.0",
     "typescript": "^5.1.3"
   }
-} 
+}
