@@ -16,6 +16,7 @@ const CONNECTOR_DIAG_TL_BR = 1; // Diagonal \
 const CONNECTOR_DIAG_BL_TR = 2; // Diagonal /
 const CONNECTOR_HORIZ_T = 3;    // Horizontal Top
 const CONNECTOR_HORIZ_B = 4;    // Horizontal Bottom
+const CONNECTOR_HORIZ_CMD = 5;  // New: Cmd-click horizontal connector
 
 // Vertex shader: Pass UVs
 const vertexShader = /*glsl*/ `
@@ -74,11 +75,12 @@ const fragmentShader = /*glsl*/ `
 
   // --- Intended Connector Sampling ---
   float getIntendedConnector(ivec2 cellCoord) {
-    // The connector texture is (gridSize-1)×(gridSize-1)
-    ivec2 connTextureSize = ivec2(u_textureResolution) - ivec2(1);
-    ivec2 clampedCoord = clamp(cellCoord, ivec2(0), connTextureSize - ivec2(1));
-    if (cellCoord != clampedCoord) return 0.0;
-    return texelFetch(u_intendedConnectorTexture, clampedCoord, 0).r;
+    ivec2 maxCoord = ivec2(u_textureResolution) - ivec2(1);
+    if (cellCoord.x < 0 || cellCoord.x >= maxCoord.x || 
+        cellCoord.y < 0 || cellCoord.y >= maxCoord.y) {
+      return 0.0;
+    }
+    return texelFetch(u_intendedConnectorTexture, cellCoord, 0).r;
   }
 
   // --- Get Cell Center in World Space ---
@@ -101,16 +103,6 @@ const fragmentShader = /*glsl*/ `
     ivec2 cell_br = cell_bl + ivec2(1, 0);
     ivec2 cell_tl = cell_bl + ivec2(0, 1);
     ivec2 cell_tr = cell_bl + ivec2(1, 1);
-
-    // Check if this is a valid 2x2 cell group
-    bool isValidGroup = 
-      cell_bl.x >= 0 && cell_bl.x < int(u_gridDimensions.x) - 1 &&
-      cell_bl.y >= 0 && cell_bl.y < int(u_gridDimensions.y) - 1;
-    
-    if (!isValidGroup) {
-      discard;
-      return;
-    }
 
     // Get states for all 4 cells around this fragment
     float state_bl = getState(cell_bl);
@@ -138,7 +130,7 @@ const fragmentShader = /*glsl*/ `
     float finalSdf = 1e6;
 
     // --- Diagonal \\ (TL to BR) Connector ---
-    if (state_tl == 1.0 && state_br == 1.0 && (intendedConnector == 1.0 || intendedConnector == 0.0)) {
+    if (state_tl == 1.0 && state_br == 1.0 && intendedConnector == 1.0) {
       // Create connector path
       float sdf_capsule_tl_br = sdCapsule(fragWorldPos, center_tl, center_br, worldRadiusB);
       
@@ -146,23 +138,16 @@ const fragmentShader = /*glsl*/ `
       float sdf_outside_tr_outer = sdCircle(fragWorldPos - center_tr, worldRadiusA);
       float sdf_outside_bl_outer = sdCircle(fragWorldPos - center_bl, worldRadiusA);
       
-      // Must be inside the bounding box
-      float sdf_inside_bbox = sdBox(fragWorldPos - bboxCenter, bboxHalfSize);
-      
       // Combine all constraints
       float sdf_diag1 = sdf_capsule_tl_br;
-      sdf_diag1 = max(sdf_diag1, -sdf_outside_tr_outer); // Intersection with "outside TR outer"
-      sdf_diag1 = max(sdf_diag1, -sdf_outside_bl_outer); // Intersection with "outside BL outer"
-      sdf_diag1 = max(sdf_diag1, sdf_inside_bbox);       // Intersection with "inside bbox"
+      sdf_diag1 = max(sdf_diag1, -sdf_outside_tr_outer);
+      sdf_diag1 = max(sdf_diag1, -sdf_outside_bl_outer);
 
-      // Only show the connector if it's explicitly selected
-      if (intendedConnector == 1.0) {
-        finalSdf = min(finalSdf, sdf_diag1);
-      }
+      finalSdf = min(finalSdf, sdf_diag1);
     }
 
     // --- Diagonal / (BL to TR) Connector ---
-    if (state_bl == 1.0 && state_tr == 1.0 && (intendedConnector == 2.0 || intendedConnector == 0.0)) {
+    if (state_bl == 1.0 && state_tr == 1.0 && intendedConnector == 2.0) {
       // Create connector path
       float sdf_capsule_bl_tr = sdCapsule(fragWorldPos, center_bl, center_tr, worldRadiusB);
       
@@ -170,39 +155,24 @@ const fragmentShader = /*glsl*/ `
       float sdf_outside_tl_outer = sdCircle(fragWorldPos - center_tl, worldRadiusA);
       float sdf_outside_br_outer = sdCircle(fragWorldPos - center_br, worldRadiusA);
       
-      // Must be inside the bounding box
-      float sdf_inside_bbox = sdBox(fragWorldPos - bboxCenter, bboxHalfSize);
-      
       // Combine all constraints
       float sdf_diag2 = sdf_capsule_bl_tr;
       sdf_diag2 = max(sdf_diag2, -sdf_outside_tl_outer);
       sdf_diag2 = max(sdf_diag2, -sdf_outside_br_outer);
-      sdf_diag2 = max(sdf_diag2, sdf_inside_bbox);
 
-      // Only show the connector if it's explicitly selected
-      if (intendedConnector == 2.0) {
-        finalSdf = min(finalSdf, sdf_diag2);
-      }
+      finalSdf = min(finalSdf, sdf_diag2);
     }
 
     // --- Horizontal (BL to BR) Connector ---
-    if (state_bl == 1.0 && state_br == 1.0 && (intendedConnector == 4.0 || intendedConnector == 0.0)) {
+    if (state_bl == 1.0 && state_br == 1.0 && intendedConnector == 4.0) {
       float sdf_h_bottom = sdCapsule(fragWorldPos, center_bl, center_br, worldRadiusB);
-      
-      // Only show the connector if it's explicitly selected
-      if (intendedConnector == 4.0) {
-        finalSdf = min(finalSdf, sdf_h_bottom);
-      }
+      finalSdf = min(finalSdf, sdf_h_bottom);
     }
 
     // --- Horizontal (TL to TR) Connector ---
-    if (state_tl == 1.0 && state_tr == 1.0 && (intendedConnector == 3.0 || intendedConnector == 0.0)) {
+    if (state_tl == 1.0 && state_tr == 1.0 && intendedConnector == 3.0) {
       float sdf_h_top = sdCapsule(fragWorldPos, center_tl, center_tr, worldRadiusB);
-      
-      // Only show the connector if it's explicitly selected
-      if (intendedConnector == 3.0) {
-        finalSdf = min(finalSdf, sdf_h_top);
-      }
+      finalSdf = min(finalSdf, sdf_h_top);
     }
 
     // --- Final Output with Anti-aliasing ---
@@ -231,7 +201,7 @@ const ConnectorMaterial = shaderMaterial(
     u_radiusA: BASE_RADIUS_A,
     u_radiusB: BASE_RADIUS_B,
     u_gridSpacing: BASE_GRID_SPACING,
-    // New uniforms for world space calculations
+    // World space uniforms
     u_centerOffset: new THREE.Vector2(0, 0),
     u_planeSize: new THREE.Vector2(10, 10),
   },

@@ -4,6 +4,7 @@ import { useControls } from 'leva';
 import { useFrame } from '@react-three/fiber';
 import CircleMaterial from './CircleMaterial';
 import ConnectorMaterial from './ConnectorMaterial';
+import CmdHorizConnectorMaterial from './CmdHorizConnectorMaterial';
 
 // === Feature 1: Grid Data & Configuration ===
 
@@ -53,6 +54,7 @@ const CONNECTOR_DIAG_TL_BR = 1; // Diagonal \
 const CONNECTOR_DIAG_BL_TR = 2; // Diagonal /
 const CONNECTOR_HORIZ_T = 3;    // Horizontal Top
 const CONNECTOR_HORIZ_B = 4;    // Horizontal Bottom
+const CONNECTOR_HORIZ_CMD = 5;  // New: Cmd-click horizontal connector
 
 // === GridScene Component ===
 
@@ -60,6 +62,9 @@ const CONNECTOR_HORIZ_B = 4;    // Horizontal Bottom
 const dummy = new THREE.Object3D();
 const tempMatrix = new THREE.Matrix4();
 const tempVec = new THREE.Vector3();
+
+// New: Helper for horizontal cmd-click connector key generation
+const getHorizCmdConnectorKey = (x: number, y: number) => `hcmd:${x},${y}`;
 
 const GridScene = () => {
   // Leva controls for grid parameters
@@ -111,6 +116,9 @@ const GridScene = () => {
   const [activationState, setActivationState] = useState<Float32Array>(() => 
     new Float32Array(TOTAL_CIRCLES).fill(0.0) // 0.0 inactive, 1.0 active
   );
+
+  // New: Add horizontal cmd-click connector state
+  const [cmdHorizConnectors, setCmdHorizConnectors] = useState<Record<string, number>>({});
 
   // State needs to be reset if TOTAL_CIRCLES changes
   useEffect(() => {
@@ -197,37 +205,90 @@ const GridScene = () => {
     if (event.instanceId === undefined || !meshRef.current) return;
 
     const index = event.instanceId;
-    const clickPoint = event.point; // Click point in world space
+    const { row: y, col: x } = getCoords(index, GRID_WIDTH);
+    
+    console.log('Circle clicked:', {
+      index,
+      x, y,
+      isCmdClick: event.metaKey || event.ctrlKey,
+      point: event.point,
+      currentState: activationState[index]
+    });
 
     // Get the center of the clicked instance
     meshRef.current.getMatrixAt(index, tempMatrix);
     const instanceCenter = tempVec.setFromMatrixPosition(tempMatrix);
 
     // Calculate distance from click point to instance center
-    const distFromCenter = clickPoint.distanceTo(instanceCenter);
+    const distFromCenter = event.point.distanceTo(instanceCenter);
 
-    // Get the CURRENT world-space inner radius (Base radius * current instance scale)
-    // Note: scaledRadiusB is calculated based on spacing, which matches instance scale
+    // Get the CURRENT world-space inner radius
     const currentInnerRadius = BASE_RADIUS_B * visualScale; 
 
-    // console.log(`Clicked instance ${index}, dist: ${distFromCenter.toFixed(2)}, innerRadius: ${currentInnerRadius.toFixed(2)}`);
+    console.log('Click details:', {
+      distFromCenter,
+      currentInnerRadius,
+      isInside: distFromCenter <= currentInnerRadius
+    });
 
     // Check if click is inside the inner circle
     if (distFromCenter <= currentInnerRadius) {
-      console.log(`Toggling instance ${index}`);
+      // Check if this is a cmd/ctrl click
+      if (event.metaKey || event.ctrlKey) {
+        // Check conditions for horizontal connector
+        const rightIndex = getIndex(y, x + 1, GRID_WIDTH);
+        const canConnect = x < GRID_WIDTH - 1 && 
+                         activationState[index] === 1.0 && 
+                         activationState[rightIndex] === 1.0;
+
+        console.log('Processing cmd-click on circle:', {
+          x, y,
+          rightIndex,
+          leftActive: activationState[index] === 1.0,
+          rightActive: x < GRID_WIDTH - 1 ? activationState[rightIndex] === 1.0 : false,
+          canConnect
+        });
+
+        if (canConnect) {
+          const connectorKey = getHorizCmdConnectorKey(x, y);
+          console.log('Toggling horizontal connector:', {
+            key: connectorKey,
+            currentValue: cmdHorizConnectors[connectorKey] || 0
+          });
+          
+          // Toggle the horizontal connector
+          setCmdHorizConnectors(prev => {
+            const newValue = prev[connectorKey] ? 0 : 1;
+            const newState = {
+              ...prev,
+              [connectorKey]: newValue
+            };
+            console.log('Updated connector state:', {
+              key: connectorKey,
+              newValue,
+              allConnectors: newState
+            });
+            return newState;
+          });
+          
+          return;
+        }
+      }
+
+      // Regular click behavior (toggle activation)
+      console.log('Toggling circle activation');
       setActivationState(current => {
-        const newState = new Float32Array(current); // Important: Copy!
-        newState[index] = newState[index] === 1.0 ? 0.0 : 1.0; // Toggle
+        const newState = new Float32Array(current);
+        newState[index] = newState[index] === 1.0 ? 0.0 : 1.0;
+        console.log('New activation state for circle:', {
+          index,
+          oldValue: current[index],
+          newValue: newState[index]
+        });
         return newState;
       });
-
-      // TODO: Feature 8 - Reset connector intent if circle is deactivated
-      // if (newState[index] === 0.0) {
-      //   // Check if intendedConnector relies on this index and reset if needed
-      // }
     }
-
-  }, [meshRef, setActivationState, visualScale]); // Dependencies for the click handler
+  }, [meshRef, setActivationState, GRID_WIDTH, visualScale, setCmdHorizConnectors, cmdHorizConnectors]);
 
   // === Feature 5: State Data Texture ===
   const stateTexture = useMemo(() => {
@@ -272,6 +333,10 @@ const GridScene = () => {
   // Handle clicks on the connector plane
   const handleConnectorClick = useCallback((event: any) => {
     event.stopPropagation();
+    console.log('Connector plane clicked:', {
+      point: event.point,
+      isCmdClick: event.metaKey || event.ctrlKey
+    });
     
     // Get the click point in world space
     const clickPoint = event.point;
@@ -297,13 +362,43 @@ const GridScene = () => {
       if (distFromCenter <= currentInnerRadius) {
         // This is a click on a circle - toggle its activation state
         const index = getIndex(gridY, gridX, GRID_WIDTH);
+
+        // If this is a cmd/ctrl click and there's an active circle to the right
+        if ((event.metaKey || event.ctrlKey) && gridX < GRID_WIDTH - 1) {
+          const rightIndex = getIndex(gridY, gridX + 1, GRID_WIDTH);
+          const leftActive = activationState[index] === 1.0;
+          const rightActive = activationState[rightIndex] === 1.0;
+
+          console.log('Processing cmd-click:', {
+            x: gridX, y: gridY,
+            leftActive,
+            rightActive
+          });
+
+          // If both circles are active, toggle the connector
+          if (leftActive && rightActive) {
+            const connectorKey = getHorizCmdConnectorKey(gridX, gridY);
+            setCmdHorizConnectors(prev => {
+              const newConnectors = { ...prev };
+              newConnectors[connectorKey] = prev[connectorKey] ? 0 : 1;
+              console.log('Toggling cmd-horiz connector:', {
+                key: connectorKey,
+                newValue: newConnectors[connectorKey]
+              });
+              return newConnectors;
+            });
+            return;
+          }
+        }
+
+        // Regular click behavior (toggle activation)
         setActivationState(current => {
           const newState = new Float32Array(current);
-          newState[index] = newState[index] === 1.0 ? 0.0 : 1.0; // Toggle
+          newState[index] = newState[index] === 1.0 ? 0.0 : 1.0;
           return newState;
         });
         console.log(`Toggling circle at (${gridX},${gridY})`);
-        return; // Exit early - we've handled this as a circle click
+        return;
       }
     }
     
@@ -341,18 +436,19 @@ const GridScene = () => {
     const centerX = (blPos.x + brPos.x + tlPos.x + trPos.x) / 4;
     const centerY = (blPos.y + brPos.y + tlPos.y + trPos.y) / 4;
     
-    // Calculate distances from click to each diagonal
-    const distToBLTR = Math.abs((clickPoint.x - blPos.x) * (trPos.y - blPos.y) - (clickPoint.y - blPos.y) * (trPos.x - blPos.x)) / 
-                      Math.sqrt(Math.pow(trPos.x - blPos.x, 2) + Math.pow(trPos.y - blPos.y, 2));
+    // Calculate distance from click to center of 2x2 group
+    const distToCenter = Math.sqrt(
+      Math.pow(clickPoint.x - centerX, 2) + 
+      Math.pow(clickPoint.y - centerY, 2)
+    );
     
-    const distToTLBR = Math.abs((clickPoint.x - tlPos.x) * (brPos.y - tlPos.y) - (clickPoint.y - tlPos.y) * (brPos.x - tlPos.x)) / 
-                      Math.sqrt(Math.pow(brPos.x - tlPos.x, 2) + Math.pow(brPos.y - tlPos.y, 2));
+    // Check if the click is in the center zone (30% of cell spacing)
+    const isCenterClick = distToCenter < FIXED_SPACING * 0.3 * visualScale;
     
-    // Determine if click is closer to horizontal or vertical
-    const clickOffsetX = clickPoint.x - centerX;
-    const clickOffsetY = clickPoint.y - centerY;
-    const isHorizontalClick = Math.abs(clickOffsetY) < Math.abs(clickOffsetX);
-    const isTopHalf = clickOffsetY > 0;
+    // Get the possible diagonal connectors
+    const canUseDiagTLBR = tlActive && brActive;
+    const canUseDiagBLTR = blActive && trActive;
+    const hasDiagonalOptions = canUseDiagTLBR || canUseDiagBLTR;
     
     // Get current intended connector
     const currentConnector = getIntendedConnector(groupX, groupY);
@@ -360,42 +456,76 @@ const GridScene = () => {
     
     let newConnector = CONNECTOR_NONE;
     
-    // Determine which connector was clicked
-    let clickedType = CONNECTOR_NONE;
-    
-    if (distToBLTR < distToTLBR) {
-      // Closer to BL-TR diagonal (/)
-      if (blActive && trActive) {
-        clickedType = CONNECTOR_DIAG_BL_TR;
+    // If clicked in the center and diagonal connectors are available, cycle through them
+    if (isCenterClick && hasDiagonalOptions) {
+      if (canUseDiagTLBR && canUseDiagBLTR) {
+        // Both diagonals are available, cycle through the options: NONE -> TL-BR -> BL-TR -> NONE
+        if (currentConnector === CONNECTOR_NONE) {
+          newConnector = CONNECTOR_DIAG_TL_BR;
+        } else if (currentConnector === CONNECTOR_DIAG_TL_BR) {
+          newConnector = CONNECTOR_DIAG_BL_TR;
+        } else {
+          newConnector = CONNECTOR_NONE;
+        }
+      } else if (canUseDiagTLBR) {
+        // Only TL-BR diagonal is available, toggle it
+        newConnector = currentConnector === CONNECTOR_DIAG_TL_BR ? CONNECTOR_NONE : CONNECTOR_DIAG_TL_BR;
+      } else if (canUseDiagBLTR) {
+        // Only BL-TR diagonal is available, toggle it
+        newConnector = currentConnector === CONNECTOR_DIAG_BL_TR ? CONNECTOR_NONE : CONNECTOR_DIAG_BL_TR;
       }
     } else {
-      // Closer to TL-BR diagonal (\)
-      if (tlActive && brActive) {
-        clickedType = CONNECTOR_DIAG_TL_BR;
-      }
-    }
-    
-    // Horizontal connector logic
-    if (isHorizontalClick) {
-      if (isTopHalf) {
-        // Top horizontal
-        if (tlActive && trActive) {
-          clickedType = CONNECTOR_HORIZ_T;
+      // For clicks outside the center, use the original logic
+      // Determine which connector was clicked
+      let clickedType = CONNECTOR_NONE;
+      
+      // Calculate distances from click to each diagonal
+      const distToBLTR = Math.abs((clickPoint.x - blPos.x) * (trPos.y - blPos.y) - (clickPoint.y - blPos.y) * (trPos.x - blPos.x)) / 
+                        Math.sqrt(Math.pow(trPos.x - blPos.x, 2) + Math.pow(trPos.y - blPos.y, 2));
+      
+      const distToTLBR = Math.abs((clickPoint.x - tlPos.x) * (brPos.y - tlPos.y) - (clickPoint.y - tlPos.y) * (brPos.x - tlPos.x)) / 
+                        Math.sqrt(Math.pow(brPos.x - tlPos.x, 2) + Math.pow(brPos.y - tlPos.y, 2));
+      
+      // Determine if click is closer to horizontal or vertical
+      const clickOffsetX = clickPoint.x - centerX;
+      const clickOffsetY = clickPoint.y - centerY;
+      const isHorizontalClick = Math.abs(clickOffsetY) < Math.abs(clickOffsetX);
+      const isTopHalf = clickOffsetY > 0;
+      
+      if (distToBLTR < distToTLBR) {
+        // Closer to BL-TR diagonal (/)
+        if (blActive && trActive) {
+          clickedType = CONNECTOR_DIAG_BL_TR;
         }
       } else {
-        // Bottom horizontal
-        if (blActive && brActive) {
-          clickedType = CONNECTOR_HORIZ_B;
+        // Closer to TL-BR diagonal (\)
+        if (tlActive && brActive) {
+          clickedType = CONNECTOR_DIAG_TL_BR;
         }
       }
-    }
-    
-    // Toggle logic - if the clicked connector is already active, turn it off
-    // Otherwise, turn off any current connector and turn on the clicked one
-    if (currentConnector === clickedType) {
-      newConnector = CONNECTOR_NONE; // Toggle off
-    } else if (clickedType !== CONNECTOR_NONE) {
-      newConnector = clickedType; // Toggle on new connector
+      
+      // Horizontal connector logic
+      if (isHorizontalClick) {
+        if (isTopHalf) {
+          // Top horizontal
+          if (tlActive && trActive) {
+            clickedType = CONNECTOR_HORIZ_T;
+          }
+        } else {
+          // Bottom horizontal
+          if (blActive && brActive) {
+            clickedType = CONNECTOR_HORIZ_B;
+          }
+        }
+      }
+      
+      // Toggle logic - if the clicked connector is already active, turn it off
+      // Otherwise, turn off any current connector and turn on the clicked one
+      if (currentConnector === clickedType) {
+        newConnector = CONNECTOR_NONE; // Toggle off
+      } else if (clickedType !== CONNECTOR_NONE) {
+        newConnector = clickedType; // Toggle on new connector
+      }
     }
     
     // Update the intended connector
@@ -412,8 +542,11 @@ const GridScene = () => {
   useEffect(() => {
     // Check all cell groups
     const newIntendedConnectors = { ...intendedConnectors };
+    const newCmdHorizConnectors = { ...cmdHorizConnectors };
     let hasChanges = false;
+    let hasCmdHorizChanges = false;
     
+    // First check regular connectors
     for (const key in intendedConnectors) {
       const connector = intendedConnectors[key];
       if (connector === CONNECTOR_NONE) continue;
@@ -456,11 +589,35 @@ const GridScene = () => {
         hasChanges = true;
       }
     }
+
+    // Now check cmd-click horizontal connectors
+    for (const key in cmdHorizConnectors) {
+      if (cmdHorizConnectors[key] === 0) continue;
+
+      // Parse x,y from key (remove 'hcmd:' prefix)
+      const [x, y] = key.substring(5).split(',').map(Number);
+
+      // Get indices for left and right circles
+      const leftIndex = getIndex(y, x, GRID_WIDTH);
+      const rightIndex = getIndex(y, x + 1, GRID_WIDTH);
+
+      // Check if both circles are still active
+      const leftActive = activationState[leftIndex] === 1.0;
+      const rightActive = activationState[rightIndex] === 1.0;
+
+      if (!leftActive || !rightActive) {
+        newCmdHorizConnectors[key] = 0;
+        hasCmdHorizChanges = true;
+      }
+    }
     
     if (hasChanges) {
       setIntendedConnectors(newIntendedConnectors);
     }
-  }, [activationState, GRID_WIDTH, intendedConnectors]);
+    if (hasCmdHorizChanges) {
+      setCmdHorizConnectors(newCmdHorizConnectors);
+    }
+  }, [activationState, GRID_WIDTH, intendedConnectors, cmdHorizConnectors]);
 
   // Create a data texture for intended connectors
   const intendedConnectorTexture = useMemo(() => {
@@ -504,11 +661,66 @@ const GridScene = () => {
     }
   }, [intendedConnectors, GRID_WIDTH, GRID_HEIGHT, intendedConnectorTexture]);
 
-  // Memoize the geometry props to avoid unnecessary re-creations
-  // const instanceGeometryArgs = useMemo(() => [1, 1], []); // Removed memoization causing TS error
+  // Create horizontal cmd-click connector texture
+  const cmdHorizConnectorTexture = useMemo(() => {
+    console.log(`Creating cmd-click horizontal connector texture: ${GRID_WIDTH-1}x${GRID_HEIGHT}`);
+    
+    // Texture has one pixel per horizontal connection possibility
+    const width = Math.max(1, GRID_WIDTH - 1);
+    const height = GRID_HEIGHT;
+    
+    const texture = new THREE.DataTexture(
+      new Float32Array(width * height).fill(0.0),
+      width,
+      height,
+      THREE.RedFormat,
+      THREE.FloatType
+    );
+    
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.needsUpdate = true;
+    
+    return texture;
+  }, [GRID_WIDTH, GRID_HEIGHT]);
+  
+  // Update the cmd-click horizontal connector texture when state changes
+  useEffect(() => {
+    const width = Math.max(1, GRID_WIDTH - 1);
+    const data = new Float32Array(width * GRID_HEIGHT);
+    
+    console.log('Updating cmd-horiz connector texture:', {
+      width,
+      height: GRID_HEIGHT,
+      connectors: cmdHorizConnectors
+    });
+    
+    for (let y = 0; y < GRID_HEIGHT; y++) {
+      for (let x = 0; x < width; x++) {
+        const key = getHorizCmdConnectorKey(x, y);
+        const value = cmdHorizConnectors[key] || 0;
+        data[y * width + x] = value;
+        
+        if (value > 0) {
+          console.log('Found active connector:', { x, y, key, value });
+        }
+      }
+    }
+    
+    if (cmdHorizConnectorTexture && data.length === cmdHorizConnectorTexture.image.data.length) {
+      cmdHorizConnectorTexture.image.data.set(data);
+      cmdHorizConnectorTexture.needsUpdate = true;
+      console.log('Updated cmd-horiz connector texture data');
+    } else {
+      console.warn('Skipping cmd-horiz texture update: size mismatch or texture not ready', {
+        textureSize: cmdHorizConnectorTexture?.image.data.length,
+        dataSize: data.length
+      });
+    }
+  }, [cmdHorizConnectors, GRID_WIDTH, GRID_HEIGHT, cmdHorizConnectorTexture]);
 
-  // Geometry for connector plane (memoized) - Removed, caused TS error
-  // const connectorPlaneArgs = useMemo(() => [planeWidth, planeHeight], [planeWidth, planeHeight]);
+  // Ref for the new material
+  const cmdHorizMaterialRef = useRef<any>(null);
 
   return (
     <group>
@@ -536,11 +748,11 @@ const GridScene = () => {
         />
       </instancedMesh>
 
-      {/* Connector Plane (Feature 6 & 7) */}
+      {/* Main Connector Plane (Existing) */}
       <mesh
-        position={[0, 0, 0.1]} // Position connectors in front of circles
+        position={[0, 0, 0.1]} // Keep this slightly in front of circles
         key={`connector-plane-${GRID_WIDTH}-${GRID_HEIGHT}-${visualScale}`}
-        onClick={handleConnectorClick} // Add click handler for connector interaction
+        onClick={handleConnectorClick} 
       >
         <planeGeometry args={[planeWidth, planeHeight]} />
         <connectorMaterial 
@@ -548,8 +760,10 @@ const GridScene = () => {
           key={ConnectorMaterial.key}
           transparent={true} 
           side={THREE.DoubleSide} 
-          // Pass required uniforms (updated for Feature 7)
+          // Pass required uniforms (cmdHoriz texture removed)
           u_stateTexture={stateTexture} 
+          u_intendedConnectorTexture={intendedConnectorTexture}
+          // u_cmdHorizConnectorTexture removed
           u_gridDimensions={[GRID_WIDTH, GRID_HEIGHT]}
           u_textureResolution={[GRID_WIDTH, GRID_HEIGHT]} 
           u_radiusA={BASE_RADIUS_A}
@@ -557,8 +771,32 @@ const GridScene = () => {
           u_gridSpacing={visualScale}
           u_centerOffset={[centerOffset.x, centerOffset.y]}
           u_planeSize={[planeWidth, planeHeight]}
-          // New uniform for connector intent
-          u_intendedConnectorTexture={intendedConnectorTexture}
+        />
+      </mesh>
+
+      {/* New Cmd-Click Horizontal Connector Plane */}
+      <mesh
+        position={[0, 0, 0.2]} // Position this slightly in front of the main connectors
+        key={`cmd-horiz-connector-plane-${GRID_WIDTH}-${GRID_HEIGHT}-${visualScale}`}
+        // No click handler needed here, interaction is via circles
+      >
+        {/* Use the same plane geometry dimensions */}
+        <planeGeometry args={[planeWidth, planeHeight]} /> 
+        <cmdHorizConnectorMaterial
+          ref={cmdHorizMaterialRef}
+          key={CmdHorizConnectorMaterial.key}
+          transparent={true}
+          side={THREE.DoubleSide}
+          // Pass necessary uniforms for this specific material
+          u_stateTexture={stateTexture}                 // Need for checking active circles
+          u_cmdHorizConnectorTexture={cmdHorizConnectorTexture} // The texture with cmd-horiz state
+          u_gridDimensions={[GRID_WIDTH, GRID_HEIGHT]}  // Grid dimensions
+          u_textureResolution={[GRID_WIDTH, GRID_HEIGHT]} // State texture resolution
+          u_radiusA={BASE_RADIUS_A}                     // Base radii
+          u_radiusB={BASE_RADIUS_B}
+          u_gridSpacing={visualScale}                   // Current visual scale
+          u_centerOffset={[centerOffset.x, centerOffset.y]} // Grid offset
+          u_planeSize={[planeWidth, planeHeight]}       // Plane dimensions
         />
       </mesh>
 
