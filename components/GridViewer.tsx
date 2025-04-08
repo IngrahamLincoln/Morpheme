@@ -419,7 +419,10 @@ const GridViewer: React.FC<GridViewerProps> = ({
   const planeKey = `viewer-plane-${gridDims.width}-${gridDims.height}-${visualScale.toFixed(2)}`;
 
   return (
-    <group>
+    <group
+      // Add pointer-events attributes to ensure UI controls are clickable
+      onClick={(e) => e.stopPropagation()}
+    >
       <instancedMesh
         ref={meshRef}
         args={[undefined, undefined, TOTAL_CIRCLES]}

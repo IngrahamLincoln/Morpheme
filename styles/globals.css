@@ -1,9 +1,10 @@
+/* Global stylesheet */
 html,
 body {
   padding: 0;
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
-    Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
 }
 
 a {
@@ -11,6 +12,48 @@ a {
   text-decoration: none;
 }
 
+/* Ensure controls are always clickable */
+button, input, select, textarea, label {
+  position: relative;
+  z-index: 100; /* Higher than other UI elements */
+  pointer-events: auto !important; /* Ensure click events are never blocked */
+}
+
+/* Ensure proper layering */
+.control-panel {
+  position: relative;
+  z-index: 1000; /* Very high z-index to ensure it's above everything */
+  pointer-events: auto !important;
+}
+
+.canvas-container {
+  position: relative;
+  z-index: 1; /* Lower z-index for the canvas container */
+}
+
+/* Ensure canvas doesn't capture pointer events for UI elements */
+.react-three-fiber {
+  pointer-events: auto;
+}
+
+/* Make UI clickable */
 * {
   box-sizing: border-box;
+}
+
+/* Canvas elements should not block UI interactions */
+canvas {
+  pointer-events: auto;
+}
+
+/* Add this rule to prevent Canvas from capturing ALL clicks */
+.control-panel * {
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 1000;
+}
+
+/* Ensure React Three Fiber doesn't block UI layer */
+.react-three-fiber {
+  position: absolute !important;
 } 

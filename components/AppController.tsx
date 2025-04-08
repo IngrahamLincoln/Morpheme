@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import GridViewer, { AdjacencyListData } from './GridViewer';
@@ -37,10 +37,34 @@ const AppController: React.FC = () => {
   const [visualScale, setVisualScale] = useState<number>(1.0);
   const [showEditor, setShowEditor] = useState<boolean>(false);
   const [showInactiveCircles, setShowInactiveCircles] = useState<boolean>(false);
+  const [controlsEnabled, setControlsEnabled] = useState<boolean>(true);
+  const controlPanelRef = useRef<HTMLDivElement>(null);
 
   // Load initial pattern on mount
   useEffect(() => {
     setActivePattern(samplePattern1);
+  }, []);
+
+  // Disable OrbitControls when hovering over control panel
+  useEffect(() => {
+    const controlPanel = controlPanelRef.current;
+    if (!controlPanel) return;
+    
+    const handleMouseEnter = () => {
+      setControlsEnabled(false);
+    };
+    
+    const handleMouseLeave = () => {
+      setControlsEnabled(true);
+    };
+    
+    controlPanel.addEventListener('mouseenter', handleMouseEnter);
+    controlPanel.addEventListener('mouseleave', handleMouseLeave);
+    
+    return () => {
+      controlPanel.removeEventListener('mouseenter', handleMouseEnter);
+      controlPanel.removeEventListener('mouseleave', handleMouseLeave);
+    };
   }, []);
 
   // Handler for loading pattern from file
@@ -74,9 +98,19 @@ const AppController: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', position: 'relative' }}>
       {/* Control Panel */}
-      <div style={{ padding: '10px', background: '#eee', borderBottom: '1px solid #ccc' }}>
+      <div 
+        ref={controlPanelRef}
+        className="control-panel" 
+        style={{ 
+          padding: '10px', 
+          background: '#eee', 
+          borderBottom: '1px solid #ccc',
+          position: 'relative',
+          zIndex: 10
+        }}
+      >
         <button 
           onClick={() => setShowEditor(!showEditor)} 
           style={{ marginRight: '20px' }}
@@ -141,11 +175,18 @@ const AppController: React.FC = () => {
       </div>
 
       {/* Canvas Area */}
-      <div style={{ flexGrow: 1, background: '#f8f8f8' }}>
+      <div className="canvas-container" style={{ 
+        flexGrow: 1, 
+        background: '#f8f8f8',
+        position: 'relative',
+        zIndex: 1
+      }}>
         <Canvas
+          className="react-three-fiber"
           orthographic
           camera={{ zoom: 50, position: [0, 0, 10] }}
           key={showEditor ? 'editor-canvas' : 'viewer-canvas'}
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
         >
           <ambientLight intensity={0.7} />
           <pointLight position={[0, 0, 5]} intensity={0.5} />
@@ -165,8 +206,12 @@ const AppController: React.FC = () => {
             </Suspense>
           )}
 
-          {/* Camera controls for navigation */}
-          <OrbitControls enableRotate={false} enablePan={true} enableZoom={true} />
+          {/* Camera controls with dynamic enabling/disabling */}
+          <OrbitControls 
+            enableRotate={false} 
+            enablePan={controlsEnabled} 
+            enableZoom={controlsEnabled}
+          />
         </Canvas>
       </div>
     </div>

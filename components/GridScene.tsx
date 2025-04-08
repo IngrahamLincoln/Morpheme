@@ -1168,12 +1168,28 @@ const GridScene = () => {
     console.log('Grid State JSON:', dataStr);
     console.log("========== SAVE DIAGNOSTICS END ==========");
 
+    // Prompt user for filename
+    const defaultFilename = `grid_state_${gridWidth}x${gridHeight}`;
+    const userFilename = prompt(`Enter filename for saving (without extension):`, defaultFilename);
+    
+    // If user cancels the prompt, abort the save
+    if (userFilename === null) {
+      console.log("Save cancelled by user.");
+      return;
+    }
+    
+    // Use the provided filename (or default if user entered empty string)
+    const finalFilename = (userFilename.trim() === '') ? defaultFilename : userFilename.trim();
+    
+    // Ensure filename has .json extension
+    const downloadFilename = finalFilename.endsWith('.json') ? finalFilename : `${finalFilename}.json`;
+
     // Trigger download
     const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `grid_state_${gridWidth}x${gridHeight}.json`;
+    a.download = downloadFilename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
