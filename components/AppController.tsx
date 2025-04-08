@@ -36,6 +36,7 @@ const AppController: React.FC = () => {
   const [activePattern, setActivePattern] = useState<AdjacencyListData | null>(null);
   const [visualScale, setVisualScale] = useState<number>(1.0);
   const [showEditor, setShowEditor] = useState<boolean>(false);
+  const [showInactiveCircles, setShowInactiveCircles] = useState<boolean>(false);
 
   // Load initial pattern on mount
   useEffect(() => {
@@ -114,7 +115,7 @@ const AppController: React.FC = () => {
               Clear Viewer
             </button>
             
-            <label>
+            <label style={{ marginRight: '20px' }}>
               Visual Scale:
               <input
                 type="range"
@@ -124,6 +125,16 @@ const AppController: React.FC = () => {
                 style={{ marginLeft: '5px', verticalAlign: 'middle' }}
               />
               ({visualScale.toFixed(1)})
+            </label>
+
+            <label style={{ display: 'inline-flex', alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={showInactiveCircles}
+                onChange={() => setShowInactiveCircles(!showInactiveCircles)}
+                style={{ marginRight: '5px' }}
+              />
+              Show Inactive Circles
             </label>
           </>
         )}
@@ -146,7 +157,11 @@ const AppController: React.FC = () => {
             </Suspense>
           ) : (
             <Suspense fallback={null}>
-              <GridViewer data={activePattern} visualScale={visualScale} />
+              <GridViewer 
+                data={activePattern} 
+                visualScale={visualScale} 
+                showInactiveCircles={showInactiveCircles}
+              />
             </Suspense>
           )}
 

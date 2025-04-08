@@ -4,6 +4,8 @@ import { useFrame } from '@react-three/fiber';
 import CircleMaterial from './CircleMaterial';
 import ConnectorMaterial from './ConnectorMaterial';
 import CmdHorizConnectorMaterial from './CmdHorizConnectorMaterial';
+import { shaderMaterial } from '@react-three/drei';
+import { extend } from '@react-three/fiber';
 import {
   FIXED_SPACING,
   BASE_RADIUS_A,
@@ -15,6 +17,73 @@ import {
   CONNECTOR_HORIZ_B,
   CONNECTOR_HORIZ_CMD
 } from './constants';
+
+// Create a custom version of CircleMaterial for the viewer that only shows active circles
+const viewerVertexShader = /*glsl*/ `
+  varying vec2 vUv;
+  attribute float a_activated;
+  varying float v_activated;
+  void main() {
+    vUv = uv;
+    v_activated = a_activated;
+    gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+  }
+`;
+
+// Modified fragment shader that only renders active circles (black inner circles)
+const viewerFragmentShader = /*glsl*/ `
+  uniform float u_radiusA;
+  uniform float u_radiusB;
+  uniform vec3 u_bgColor;
+  uniform vec3 u_outerColor;
+  uniform vec3 u_innerColorEmpty;
+  uniform vec3 u_innerColorActive;
+
+  varying vec2 vUv;
+  varying float v_activated;
+
+  void main() {
+    float dist = distance(vUv, vec2(0.5));
+    
+    // If not activated, discard completely (don't render inactive circles)
+    if (v_activated < 0.5) {
+      discard;
+    }
+    
+    // Only render activated circles
+    if (dist <= u_radiusB) {
+      gl_FragColor = vec4(u_innerColorActive, 1.0); // Solid black inner circle
+    } else {
+      discard; // No outer ring for activated circles in viewer mode
+    }
+  }
+`;
+
+// Create the viewer-specific shader material
+const ViewerCircleMaterial = shaderMaterial(
+  {
+    u_radiusA: 0.5,
+    u_radiusB: 0.4,
+    u_bgColor: new THREE.Color('#ffffff'),
+    u_outerColor: new THREE.Color('#cccccc'),
+    u_innerColorEmpty: new THREE.Color('#ffffff'),
+    u_innerColorActive: new THREE.Color('#000000'),
+  },
+  viewerVertexShader,
+  viewerFragmentShader
+);
+
+// Extend R3F to recognize the material
+extend({ ViewerCircleMaterial });
+
+// Add to global JSX namespace
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      viewerCircleMaterial: any;
+    }
+  }
+}
 
 // Helper functions from GridScene
 const getIndex = (row: number, col: number, gridWidth: number): number => {
@@ -77,9 +146,14 @@ export interface AdjacencyListData {
 interface GridViewerProps {
   data: AdjacencyListData | null;
   visualScale?: number;
+  showInactiveCircles?: boolean;
 }
 
-const GridViewer: React.FC<GridViewerProps> = ({ data, visualScale = 1.0 }) => {
+const GridViewer: React.FC<GridViewerProps> = ({ 
+  data, 
+  visualScale = 1.0,
+  showInactiveCircles = false
+}) => {
   // Internal state to hold grid dimensions derived from data
   const [gridDims, setGridDims] = useState({ width: 0, height: 0 });
 
@@ -341,7 +415,7 @@ const GridViewer: React.FC<GridViewerProps> = ({ data, visualScale = 1.0 }) => {
   }
 
   // Unique keys for mesh recreation when dimensions change
-  const meshKey = `viewer-${gridDims.width}-${gridDims.height}-${TOTAL_CIRCLES}`;
+  const meshKey = `viewer-${gridDims.width}-${gridDims.height}-${TOTAL_CIRCLES}-${showInactiveCircles ? 'with-inactive' : 'active-only'}`;
   const planeKey = `viewer-plane-${gridDims.width}-${gridDims.height}-${visualScale.toFixed(2)}`;
 
   return (
@@ -361,11 +435,21 @@ const GridViewer: React.FC<GridViewerProps> = ({ data, visualScale = 1.0 }) => {
             usage={THREE.DynamicDrawUsage}
           />
         </planeGeometry>
-        <circleMaterial
-          ref={materialRef}
-          transparent={true}
-          key={CircleMaterial.key}
-        />
+        {showInactiveCircles ? (
+          // Use original circle material if showing inactive circles
+          <circleMaterial
+            ref={materialRef}
+            transparent={true}
+            key={CircleMaterial.key}
+          />
+        ) : (
+          // Use our custom viewer material that only shows active circles
+          <viewerCircleMaterial
+            ref={materialRef}
+            transparent={true}
+            key={ViewerCircleMaterial.key}
+          />
+        )}
       </instancedMesh>
 
       {/* Main Connector Plane */}
