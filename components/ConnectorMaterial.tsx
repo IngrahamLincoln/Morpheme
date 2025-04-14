@@ -1,20 +1,7 @@
 import * as THREE from 'three';
 import { shaderMaterial } from '@react-three/drei';
-import { extend } from '@react-three/fiber';
-
-// Define constants matching GridScene for defaults
-// Moved to top to fix linter errors
-const BASE_GRID_SPACING = 1.0;
-const BASE_RADIUS_A = 0.5; // Outer radius relative to spacing=1
-const BASE_RADIUS_B = 0.4; // Inner radius relative to spacing=1
-// Fixed spacing is BASE_RADIUS_A + BASE_RADIUS_B = 0.9
-const FIXED_SPACING = BASE_RADIUS_A + BASE_RADIUS_B;
-
-// Define connector types as constants - must match GridScene.tsx
-const CONNECTOR_NONE = 0;
-const CONNECTOR_DIAG_TL_BR = 1; // Diagonal \
-const CONNECTOR_DIAG_BL_TR = 2; // Diagonal /
-const CONNECTOR_HORIZ_CMD = 3;  // New: Cmd-click horizontal connector
+import { extend, MaterialNode } from '@react-three/fiber';
+import { BASE_RADIUS_A, BASE_RADIUS_B, FIXED_SPACING, CONNECTOR_DIAG_TL_BR, CONNECTOR_DIAG_BL_TR, CONNECTOR_HORIZ_T, CONNECTOR_HORIZ_B, CONNECTOR_NONE, CONNECTOR_HORIZ_CMD } from './constants'; // Import ALL geometry and connector type constants
 
 // Vertex shader: Pass UVs
 const vertexShader = /*glsl*/ `
@@ -189,20 +176,33 @@ const fragmentShader = /*glsl*/ `
   }
 `;
 
+// Interface for the uniforms
+interface ConnectorMaterialUniforms {
+  u_stateTexture: THREE.Texture | null;
+  u_intendedConnectorTexture: THREE.Texture | null;
+  u_gridDimensions: THREE.Vector2;
+  u_textureResolution: THREE.Vector2;
+  u_radiusA: number;
+  u_radiusB: number;
+  u_gridSpacing: number; // This is the visual scale multiplier
+  u_centerOffset: THREE.Vector2;
+  u_planeSize: THREE.Vector2;
+}
+
 // Create the shader material
 const ConnectorMaterial = shaderMaterial(
+  // Uniforms definition with initial values
   {
-    u_stateTexture: null, 
+    u_stateTexture: null,
     u_intendedConnectorTexture: null,
     u_gridDimensions: new THREE.Vector2(10, 10),
     u_textureResolution: new THREE.Vector2(10, 10),
     u_radiusA: BASE_RADIUS_A,
     u_radiusB: BASE_RADIUS_B,
-    u_gridSpacing: BASE_GRID_SPACING,
-    // World space uniforms
+    u_gridSpacing: 1.0, // Default visual scale multiplier
     u_centerOffset: new THREE.Vector2(0, 0),
     u_planeSize: new THREE.Vector2(10, 10),
-  },
+  } satisfies ConnectorMaterialUniforms, // Use satisfies for type checking initial values
   vertexShader,
   fragmentShader
 );
@@ -210,18 +210,16 @@ const ConnectorMaterial = shaderMaterial(
 // Extend R3F
 extend({ ConnectorMaterial });
 
-// Define TypeScript type for JSX usage
+// Define TypeScript type for JSX usage using MaterialNode
 declare global {
   namespace JSX {
     interface IntrinsicElements {
-      connectorMaterial: any; 
+      // Use MaterialNode<THREE.ShaderMaterial, typeof ConnectorMaterialUniforms> ?
+      // Or MaterialNode<typeof ConnectorMaterial, typeof ConnectorMaterialUniforms> ?
+      // Let's try typing the props based on the uniforms interface directly.
+      connectorMaterial: MaterialNode<THREE.ShaderMaterial, ConnectorMaterialUniforms>;
     }
   }
 }
 
 export default ConnectorMaterial;
-// Define constants matching GridScene for defaults (optional, but helps IDE)
-// Moved to top - Removing these commented out versions
-// const BASE_GRID_SPACING = 1.0;
-// const BASE_RADIUS_A = 0.5;
-// const BASE_RADIUS_B = 0.4; 

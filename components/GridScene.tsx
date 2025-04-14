@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { useControls, button, folder } from 'leva';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, ThreeEvent } from '@react-three/fiber';
 import CircleMaterial from './CircleMaterial';
 import ConnectorMaterial from './ConnectorMaterial';
 import CmdHorizConnectorMaterial from './CmdHorizConnectorMaterial';
@@ -271,14 +271,24 @@ const GridScene = () => {
     })
   }));
 
-  // Derived values calculation - use 'controls' now
-  const { TOTAL_CIRCLES, centerOffset, planeWidth, planeHeight } = useMemo(() => {
-      const total = controls.GRID_WIDTH * controls.GRID_HEIGHT;
-      const offset = getCenterOffset(controls.GRID_WIDTH, controls.GRID_HEIGHT, FIXED_SPACING);
-      const width = (controls.GRID_WIDTH > 1 ? (controls.GRID_WIDTH - 1) * FIXED_SPACING : 0) + (controls.visualScale * BASE_RADIUS_A * 2);
-      const height = (controls.GRID_HEIGHT > 1 ? (controls.GRID_HEIGHT - 1) * FIXED_SPACING : 0) + (controls.visualScale * BASE_RADIUS_A * 2);
-      return { TOTAL_CIRCLES: total, centerOffset: offset, planeWidth: width, planeHeight: height };
-  }, [controls.GRID_WIDTH, controls.GRID_HEIGHT, controls.visualScale]); // Update dependencies
+  // Derived values calculation - use 'controls' now and visualScale
+  const { TOTAL_CIRCLES, centerOffset, planeWidth, planeHeight, currentSpacing } = useMemo(() => {
+      const width = controls.GRID_WIDTH;
+      const height = controls.GRID_HEIGHT;
+      if (width <= 0 || height <= 0) {
+          return { TOTAL_CIRCLES: 0, centerOffset: new THREE.Vector2(), planeWidth: 0, planeHeight: 0, currentSpacing: 0 };
+      }
+      
+      const total = width * height;
+      const spacing = FIXED_SPACING * controls.visualScale; // Use visualScale for spacing
+      const offset = getCenterOffset(width, height, spacing); // Use calculated spacing
+      
+      const scaledRadiusA = BASE_RADIUS_A * controls.visualScale; // Scale radius for plane dims
+      const pWidth = (width > 1 ? (width - 1) * spacing : 0) + (scaledRadiusA * 2);
+      const pHeight = (height > 1 ? (height - 1) * spacing : 0) + (scaledRadiusA * 2);
+      
+      return { TOTAL_CIRCLES: total, centerOffset: offset, planeWidth: pWidth, planeHeight: pHeight, currentSpacing: spacing };
+  }, [controls.GRID_WIDTH, controls.GRID_HEIGHT, controls.visualScale]); // Ensure visualScale is a dependency
 
   // Refs for mesh and material
   const meshRef = useRef<THREE.InstancedMesh>(null!);
@@ -339,22 +349,24 @@ const GridScene = () => {
     // Calculate and set instance matrices
     for (let index = 0; index < TOTAL_CIRCLES; index++) {
       const { row, col } = getCoords(index, controls.GRID_WIDTH);
+      // Use currentSpacing (which includes visualScale) for positioning
       const { x, y } = getWorldPosition(
         row,
         col,
         controls.GRID_WIDTH,
         controls.GRID_HEIGHT,
-        FIXED_SPACING,
+        currentSpacing, // <<< Use scaled spacing
         centerOffset
       );
-      dummy.position.set(x, y, 0); // Z=0 for circles
-       // Retrieve existing scale/rotation before setting position to avoid overwriting scale effect
+      
+      // Retrieve existing scale/rotation before setting position to avoid overwriting scale effect
       const currentMatrix = new THREE.Matrix4();
       meshRef.current.getMatrixAt(index, currentMatrix);
       const position = new THREE.Vector3();
       const quaternion = new THREE.Quaternion();
-      const scaleVec = new THREE.Vector3();
+      const scaleVec = new THREE.Vector3(); // We will set scale separately
       currentMatrix.decompose(position, quaternion, scaleVec);
+      
       // Update only position
       position.set(x, y, 0);
       dummy.matrix.compose(position, quaternion, scaleVec); // Recompose with original scale/rotation
@@ -364,7 +376,7 @@ const GridScene = () => {
 
     // console.log(`Updated ${TOTAL_CIRCLES} instance matrices (position).`);
 
-  }, [controls.GRID_WIDTH, controls.GRID_HEIGHT, FIXED_SPACING, TOTAL_CIRCLES, centerOffset]);
+  }, [controls.GRID_WIDTH, controls.GRID_HEIGHT, TOTAL_CIRCLES, centerOffset, currentSpacing]); // <<< Add currentSpacing dependency
 
   // Update shader uniforms when scaled radii change
   useEffect(() => {
@@ -378,26 +390,27 @@ const GridScene = () => {
     }
   }, []); // Depend on scaled radii, though using base for uniform now
 
- // Adjust instance scale based on spacing
+ // Adjust instance scale based on spacing -- REMOVED, scale should be constant (1,1,1)
  useEffect(() => {
   if (!meshRef.current) return;
-  const scale = controls.visualScale; // Use the leva control value for scale
-  console.log(`Updating instance scales to: ${scale.toFixed(2)}`);
+  // const scale = controls.visualScale; // Use the leva control value for scale - NO, keep scale 1
+  const scale = 1.0; // <<< Always use scale 1
+  console.log(`Updating instance scales to: ${scale.toFixed(2)} (should be 1.0)`);
   for (let index = 0; index < TOTAL_CIRCLES; index++) {
       meshRef.current.getMatrixAt(index, tempMatrix);
       const position = tempVec.setFromMatrixPosition(tempMatrix);
       const quaternion = new THREE.Quaternion().setFromRotationMatrix(tempMatrix);
       // Update only scale
-      const scaleVec = new THREE.Vector3().set(scale, scale, 1);
+      const scaleVec = new THREE.Vector3().set(scale, scale, 1); // <<< Set scale to 1
       
       tempMatrix.compose(position, quaternion, scaleVec);
       meshRef.current.setMatrixAt(index, tempMatrix);
   }
   meshRef.current.instanceMatrix.needsUpdate = true;
-}, [controls.visualScale, TOTAL_CIRCLES]); // Depends on scale control and count
+}, [TOTAL_CIRCLES]); // <<< Removed controls.visualScale dependency
 
   // === Feature 4: Circle Interaction (Now uses helpers defined above) ===
-  const handleCircleClick = useCallback((event: any) => {
+  const handleCircleClick = useCallback((event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation();
     if (event.instanceId === undefined || !meshRef.current) return;
 
@@ -431,7 +444,9 @@ const GridScene = () => {
     // Check if click is inside the inner circle
     if (distFromCenter <= currentInnerRadius) {
       // Check if this is a cmd/ctrl click
-      if (event.metaKey || event.ctrlKey) {
+      const isCmdClick = event.metaKey || event.ctrlKey;
+
+      if (isCmdClick) {
         // Check conditions for horizontal connector
         const rightIndex = getIndex(y, x + 1, controls.GRID_WIDTH);
         const canConnectBase = x < controls.GRID_WIDTH - 1 && 
@@ -531,7 +546,7 @@ const GridScene = () => {
   }, [activationState, stateTexture]); // Depend on activation state and the texture itself
 
   // === Feature 8: Connector Plane Interaction (Moved DOWN, uses helpers defined above) ===
-  const handleConnectorClick = useCallback((event: any) => {
+  const handleConnectorClick = useCallback((event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation();
     console.log('Connector plane clicked:', {
       point: event.point,
@@ -542,14 +557,14 @@ const GridScene = () => {
     const clickPoint = event.point;
     
     // First, check if the click is on a circle
-    // Determine which grid cell this point is closest to
-    const gridX = Math.round((clickPoint.x - centerOffset.x) / FIXED_SPACING);
-    const gridY = Math.round((clickPoint.y - centerOffset.y) / FIXED_SPACING);
+    // Determine which grid cell this point is closest to using scaled spacing
+    const gridX = Math.round((clickPoint.x - centerOffset.x) / currentSpacing); // <<< Use currentSpacing
+    const gridY = Math.round((clickPoint.y - centerOffset.y) / currentSpacing); // <<< Use currentSpacing
     
     // Check if this cell is within grid bounds
     if (gridX >= 0 && gridX < controls.GRID_WIDTH && gridY >= 0 && gridY < controls.GRID_HEIGHT) {
-      // Calculate the cell center in world space
-      const cellCenter = getWorldPosition(gridY, gridX, controls.GRID_WIDTH, controls.GRID_HEIGHT, FIXED_SPACING, centerOffset);
+      // Calculate the cell center in world space using scaled spacing
+      const cellCenter = getWorldPosition(gridY, gridX, controls.GRID_WIDTH, controls.GRID_HEIGHT, currentSpacing, centerOffset); // <<< Use currentSpacing
       
       // Calculate distance from click to cell center
       const distFromCenter = Math.sqrt(
@@ -626,9 +641,9 @@ const GridScene = () => {
     }
     
     // If we get here, the click wasn't on a circle, so treat it as a connector click
-    // Determine which grid cell (bottom-left of a 2x2 group) this point is closest to
-    const groupX = Math.floor((clickPoint.x - centerOffset.x) / FIXED_SPACING);
-    const groupY = Math.floor((clickPoint.y - centerOffset.y) / FIXED_SPACING);
+    // Determine which grid cell (bottom-left of a 2x2 group) this point is closest to using scaled spacing
+    const groupX = Math.floor((clickPoint.x - centerOffset.x) / currentSpacing); // <<< Use currentSpacing
+    const groupY = Math.floor((clickPoint.y - centerOffset.y) / currentSpacing); // <<< Use currentSpacing
     
     // Get the indices of the four cells in the 2x2 group
     const blIndex = getIndex(groupY, groupX, controls.GRID_WIDTH);
@@ -649,11 +664,11 @@ const GridScene = () => {
     const tlActive = activationState[tlIndex] === 1.0;
     const trActive = activationState[trIndex] === 1.0;
     
-    // Get the world positions of the cell centers
-    const blPos = getWorldPosition(groupY, groupX, controls.GRID_WIDTH, controls.GRID_HEIGHT, FIXED_SPACING, centerOffset);
-    const brPos = getWorldPosition(groupY, groupX + 1, controls.GRID_WIDTH, controls.GRID_HEIGHT, FIXED_SPACING, centerOffset);
-    const tlPos = getWorldPosition(groupY + 1, groupX, controls.GRID_WIDTH, controls.GRID_HEIGHT, FIXED_SPACING, centerOffset);
-    const trPos = getWorldPosition(groupY + 1, groupX + 1, controls.GRID_WIDTH, controls.GRID_HEIGHT, FIXED_SPACING, centerOffset);
+    // Get the world positions of the cell centers using scaled spacing
+    const blPos = getWorldPosition(groupY, groupX, controls.GRID_WIDTH, controls.GRID_HEIGHT, currentSpacing, centerOffset); // <<< Use currentSpacing
+    const brPos = getWorldPosition(groupY, groupX + 1, controls.GRID_WIDTH, controls.GRID_HEIGHT, currentSpacing, centerOffset); // <<< Use currentSpacing
+    const tlPos = getWorldPosition(groupY + 1, groupX, controls.GRID_WIDTH, controls.GRID_HEIGHT, currentSpacing, centerOffset); // <<< Use currentSpacing
+    const trPos = getWorldPosition(groupY + 1, groupX + 1, controls.GRID_WIDTH, controls.GRID_HEIGHT, currentSpacing, centerOffset); // <<< Use currentSpacing
     
     // Calculate the center of the 2x2 group
     const centerX = (blPos.x + brPos.x + tlPos.x + trPos.x) / 4;
@@ -665,8 +680,8 @@ const GridScene = () => {
       Math.pow(clickPoint.y - centerY, 2)
     );
     
-    // Check if the click is in the center zone (30% of cell spacing)
-    const isCenterClick = distToCenter < FIXED_SPACING * 0.3 * controls.visualScale;
+    // Check if the click is in the center zone (relative to scaled cell spacing)
+    const isCenterClick = distToCenter < currentSpacing * 0.3; // <<< Use currentSpacing
     
     // Get the possible diagonal connectors
     const canUseDiagTLBR = tlActive && brActive;
@@ -780,7 +795,7 @@ const GridScene = () => {
     
     console.log(`Clicked cell group (${groupX},${groupY}), setting connector to ${newConnector}`);
     
-  }, [controls.GRID_WIDTH, controls.GRID_HEIGHT, FIXED_SPACING, centerOffset, activationState, intendedConnectors, controls.visualScale, setCmdHorizConnectors, cmdHorizConnectors]); // Dependencies are correct now
+  }, [controls.GRID_WIDTH, controls.GRID_HEIGHT, currentSpacing, centerOffset, activationState, intendedConnectors, controls.visualScale, setCmdHorizConnectors, cmdHorizConnectors, getIntendedConnector]); // <<< Replaced FIXED_SPACING with currentSpacing, added getIntendedConnector
 
   // Reset connector intent when a circle is deactivated
   useEffect(() => {
@@ -1471,6 +1486,7 @@ const GridScene = () => {
           u_gridSpacing={controls.visualScale}
           u_centerOffset={[centerOffset.x, centerOffset.y]}
           u_planeSize={[planeWidth, planeHeight]}
+          u_fixedSpacing={FIXED_SPACING}
         />
       </mesh>
 

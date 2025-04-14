@@ -1,11 +1,7 @@
 import * as THREE from 'three';
 import { shaderMaterial } from '@react-three/drei';
-import { extend } from '@react-three/fiber';
-
-// Constants from GridScene/ConnectorMaterial needed for calculations
-const BASE_RADIUS_A = 0.5; // Outer radius relative to spacing=1
-const BASE_RADIUS_B = 0.4; // Inner radius relative to spacing=1
-const FIXED_SPACING = BASE_RADIUS_A + BASE_RADIUS_B; // 0.9
+import { extend, MaterialNode } from '@react-three/fiber'; // Import MaterialNode
+import { BASE_RADIUS_A, BASE_RADIUS_B, FIXED_SPACING } from './constants'; // Import geometry constants
 
 // Vertex shader: Pass UVs (same as ConnectorMaterial)
 const vertexShader = /*glsl*/ `
@@ -150,20 +146,35 @@ const fragmentShader = /*glsl*/ `
   }
 `;
 
+// Interface for the uniforms
+interface CmdHorizConnectorMaterialUniforms {
+  u_stateTexture: THREE.Texture | null;
+  u_cmdHorizConnectorTexture: THREE.Texture | null;
+  u_gridDimensions: THREE.Vector2;
+  u_textureResolution: THREE.Vector2; // Should match stateTexture size
+  u_radiusA: number;
+  u_radiusB: number;
+  u_gridSpacing: number; // Visual scale multiplier
+  u_fixedSpacing: number; // Base fixed spacing
+  u_centerOffset: THREE.Vector2;
+  u_planeSize: THREE.Vector2;
+}
+
 // Create the shader material
 const CmdHorizConnectorMaterial = shaderMaterial(
+  // Uniforms definition with initial values
   {
     u_stateTexture: null,             // Will be passed from GridScene
     u_cmdHorizConnectorTexture: null, // Will be passed from GridScene
     u_gridDimensions: new THREE.Vector2(10, 10),
-    u_textureResolution: new THREE.Vector2(10, 10), // Should match stateTexture size
+    u_textureResolution: new THREE.Vector2(10, 10),
     u_radiusA: BASE_RADIUS_A,
     u_radiusB: BASE_RADIUS_B,
     u_gridSpacing: 1.0, // Default scale
     u_fixedSpacing: FIXED_SPACING, // Pass the base fixed spacing
     u_centerOffset: new THREE.Vector2(0, 0),
     u_planeSize: new THREE.Vector2(10, 10),
-  },
+  } satisfies CmdHorizConnectorMaterialUniforms, // Use satisfies for type checking
   vertexShader,
   fragmentShader
 );
@@ -175,7 +186,7 @@ extend({ CmdHorizConnectorMaterial });
 declare global {
   namespace JSX {
     interface IntrinsicElements {
-      cmdHorizConnectorMaterial: any; // Use 'any' or define specific types
+      cmdHorizConnectorMaterial: MaterialNode<THREE.ShaderMaterial, CmdHorizConnectorMaterialUniforms>;
     }
   }
 }

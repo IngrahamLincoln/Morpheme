@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { shaderMaterial } from '@react-three/drei';
-import { extend } from '@react-three/fiber';
+import { extend, MaterialNode } from '@react-three/fiber';
+import { BASE_RADIUS_A, BASE_RADIUS_B } from './constants';
 
 // Simple vertex shader
 const vertexShader = /*glsl*/ `
@@ -55,28 +56,38 @@ const fragmentShader = /*glsl*/ `
   }
 `;
 
-// Create the shader material using drei/shaderMaterial
+// Interface for the uniforms
+interface CircleMaterialUniforms {
+  u_innerColorEmpty: THREE.Color;
+  u_innerColorActive: THREE.Color;
+  u_outerColor: THREE.Color;
+  u_radiusA: number;
+  u_radiusB: number;
+  // Activation attribute will be removed later and replaced by texture lookup
+}
+
+// Create the shader material
 const CircleMaterial = shaderMaterial(
+  // Uniforms
   {
-    u_radiusA: 0.5, // Default value, will be updated
-    u_radiusB: 0.4, // Default value, will be updated
-    u_bgColor: new THREE.Color('#ffffff'), // Default bg
-    u_outerColor: new THREE.Color('#cccccc'), // Light grey outer ring
-    u_innerColorEmpty: new THREE.Color('#ffffff'), // White/transparent inner empty
-    u_innerColorActive: new THREE.Color('#000000'), // Black inner active
-  },
+    u_innerColorEmpty: new THREE.Color(0xffffff),
+    u_innerColorActive: new THREE.Color(0x000000),
+    u_outerColor: new THREE.Color(0x000000),
+    u_radiusA: BASE_RADIUS_A,
+    u_radiusB: BASE_RADIUS_B,
+  } satisfies CircleMaterialUniforms, // Use satisfies for type checking
   vertexShader,
-  fragmentShader
+  fragmentShader,
 );
 
-// Extend R3F to recognize the material
+// Extend R3F
 extend({ CircleMaterial });
 
 // Define TypeScript type for JSX usage
 declare global {
   namespace JSX {
     interface IntrinsicElements {
-      circleMaterial: any; // Use \'any\' or define more specific types
+      circleMaterial: MaterialNode<THREE.ShaderMaterial, CircleMaterialUniforms>;
     }
   }
 }
